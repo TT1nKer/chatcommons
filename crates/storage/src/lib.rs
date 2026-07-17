@@ -45,6 +45,13 @@ impl EventStore {
         })
     }
 
+    pub fn is_empty(&self) -> Result<bool, StorageError> {
+        let count: i64 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?;
+        Ok(count == 0)
+    }
+
     pub fn get(&self, id: EventId) -> Result<Option<SignedEvent>, StorageError> {
         let body: Option<Vec<u8>> = self
             .connection

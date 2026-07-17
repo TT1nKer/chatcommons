@@ -248,6 +248,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatcommons-cli"
+version = "0.1.0"
+dependencies = [
+ "chatcommons-crypto",
+ "chatcommons-node-core",
+ "chatcommons-profile-chat",
+ "chatcommons-protocol",
+ "chatcommons-storage",
+ "chatcommons-sync",
+ "hex",
+ "libp2p",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "chatcommons-crypto"
 version = "0.1.0"
 dependencies = [

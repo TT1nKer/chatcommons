@@ -1,0 +1,27 @@
+[package]
+name = "chatcommons-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "chatcommons-node"
+path = "src/main.rs"
+
+[dependencies]
+chatcommons-crypto = { path = "../crypto" }
+chatcommons-node-core = { path = "../node-core" }
+chatcommons-profile-chat = { path = "../profile-chat" }
+chatcommons-protocol = { path = "../protocol" }
+chatcommons-storage = { path = "../storage" }
+chatcommons-sync = { path = "../sync" }
+hex.workspace = true
+libp2p.workspace = true
+rand_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
