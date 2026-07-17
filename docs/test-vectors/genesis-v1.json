@@ -1,0 +1,22 @@
+{
+  "description": "Legacy pre-ChatCommons protocol v1 deterministic genesis vector",
+  "warning": "The seed is public test material and must never be used for a real identity.",
+  "seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+  "content": {
+    "protocol_version": 1,
+    "community_id": null,
+    "author_user_id_hex": "0871f3aabc26e4582c508af5c03884e6a96f0989d1dd8cfb49cd17ed25792433",
+    "author_sequence": 0,
+    "parents": [],
+    "timestamp_ms": 1700000000000,
+    "payload": {
+      "type": "CommunityGenesis",
+      "name": "OpenCord Vector"
+    }
+  },
+  "canonical_content_hex": "6f70656e636f72643a636f6e74656e743a7631000001000871f3aabc26e4582c508af5c03884e6a96f0989d1dd8cfb49cd17ed257924330000000000000000000000000000018bcfe56800000000000f4f70656e436f726420566563746f72",
+  "public_key_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+  "signature_hex": "87b98e696b91b0b6899e5b11f2067bd60f209717ded2963e24303ce51a0381df2f7946bea13c048ec753020b56db661542145408b90ca22e824464d7be3a5201",
+  "event_id_hex": "1a7d69e31904f9b275c37412b722c4735eb511b37883d0f582078ffe3b583fa3",
+  "community_id_hex": "1a7d69e31904f9b275c37412b722c4735eb511b37883d0f582078ffe3b583fa3"
+}

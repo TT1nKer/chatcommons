@@ -1,0 +1,18 @@
+[package]
+name = "chatcommons-profile-chat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chatcommons-crypto = { path = "../crypto" }
+chatcommons-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
+rand_core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+chatcommons-storage = { path = "../storage" }
+chatcommons-node-core = { path = "../node-core" }
+tempfile.workspace = true

@@ -1,0 +1,29 @@
+[workspace]
+members = [
+    "crates/crypto",
+    "crates/protocol",
+    "crates/storage",
+    "crates/node-core",
+    "crates/profile-chat",
+    "crates/sync",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+
+[workspace.dependencies]
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+futures = "0.3"
+hex = "0.4"
+libp2p = { version = "0.56", features = ["ed25519", "json", "macros", "quic", "request-response", "tokio"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

@@ -1,0 +1,18 @@
+{
+  "description": "ChatCommons Core protocol v2 deterministic genesis vector",
+  "warning": "The seed is public test material and must never be used for a real identity.",
+  "seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+  "content": {
+    "protocol_version": 2,
+    "community_id": null,
+    "parents": [],
+    "timestamp_ms": 1700000000000,
+    "event_type": "test.genesis",
+    "payload_hex": "43686174436f6d6d6f6e73207632"
+  },
+  "canonical_content_hex": "63686174636f6d6d6f6e733a636f6e74656e743a763200000200000000000000018bcfe568000000000c746573742e67656e657369730000000e43686174436f6d6d6f6e73207632",
+  "public_key_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+  "signature_hex": "2e55180cc7d069bb65d46e9aab0d86b1d53f3e48c6f6f09a34065834ed76549885360d7baa0687ef2cce15d6b954281f60bb12b52104397342b31cc44187d905",
+  "event_id_hex": "9907bedb98c7cb6587f9a037ee5cdc29cd71ba1b71c3382eef20a118fadca530",
+  "community_id_hex": "9907bedb98c7cb6587f9a037ee5cdc29cd71ba1b71c3382eef20a118fadca530"
+}

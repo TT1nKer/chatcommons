@@ -1,0 +1,28 @@
+/target
+
+# Local environment and secrets. Commit only documented placeholders.
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local runtime state.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.log
+
+# Machine-specific editor and OS files.
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

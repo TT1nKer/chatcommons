@@ -1,0 +1,23 @@
+[package]
+name = "chatcommons-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3.workspace = true
+futures.workspace = true
+hex.workspace = true
+libp2p.workspace = true
+chatcommons-crypto = { path = "../crypto" }
+chatcommons-node-core = { path = "../node-core" }
+chatcommons-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+chatcommons-profile-chat = { path = "../profile-chat" }
+chatcommons-storage = { path = "../storage" }
+tempfile.workspace = true
