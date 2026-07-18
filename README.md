@@ -78,6 +78,11 @@ has an ephemeral identity, no persistence and no production operating controls.
 Do not expose it publicly. See
 [ADR 0016](docs/adr/0016-relay-assisted-hole-punching.md).
 
+The fallback path has also completed a physical cross-NAT measurement between a
+macOS hotspot client and Windows/WSL on a separate home connection. The direct
+candidate timed out for that NAT combination, while invitation
+bootstrap and SQLite convergence completed over a third-party Relay v2 node.
+
 Run all quality gates:
 
 ```sh

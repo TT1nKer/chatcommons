@@ -94,7 +94,8 @@ not an end-user client and must not be exposed as a public service. See
 - forged capabilities and repeated redemption are rejected in a real two-process
   QUIC test
 
-Public two-machine measurement remains pending. See
+Direct-address physical measurement remains pending; the secure invitation flow
+was exercised during the M2e cross-NAT relay measurement. See
 [`ADR 0015`](adr/0015-secure-invitation-bootstrap.md).
 
 ## M2e — relay-assisted NAT traversal (implemented locally)
@@ -107,14 +108,16 @@ Public two-machine measurement remains pending. See
 - the diagnostic relay enforces circuit, byte, duration and rate bounds
 - real in-process and three-process tests cover fallback and direct upgrade
 
-Physical cross-NAT measurement remains pending because no public relay has been
-approved for this project. The included relay has an ephemeral identity and is
-not a public-service binary. See
+One physical cross-NAT measurement is complete: macOS on a phone hotspot and
+Windows/WSL on a separate home connection completed bootstrap and SQLite
+convergence over an independently operated IPFS Relay v2 peer. The direct
+candidate timed out and the relay remained the working fallback. The included
+relay still has an ephemeral identity and is not a public-service binary. See
 [`ADR 0016`](adr/0016-relay-assisted-hole-punching.md).
 
 ## Suggested M2f
 
-Measure the existing M2e path between two physical networks using a separately
-approved relay, record direct-upgrade success and fallback behavior, and remove
-all temporary endpoint state afterward. Do not add discovery, voice, files or a
-public relay operation until their respective engineering gates are met.
+Repeat M2e across a small NAT/firewall matrix, record direct-upgrade latency,
+success, fallback traffic and session stability, then define a replaceable relay
+selection profile. Do not add voice, files or a project-operated public relay
+until their respective engineering gates are met.

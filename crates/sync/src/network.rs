@@ -205,6 +205,7 @@ pub struct NetworkNode {
     allowed_users: BTreeSet<UserId>,
     revocations: auth::RevocationSet,
     authenticated: BTreeSet<PeerId>,
+    authentication_sent: BTreeSet<PeerId>,
     accepted_by_remote: BTreeSet<PeerId>,
     sync_started: BTreeSet<PeerId>,
     provisional: BTreeMap<PeerId, auth::AuthenticatedDevice>,
@@ -214,6 +215,7 @@ pub struct NetworkNode {
     pending_acceptances: BTreeMap<PeerId, PendingAcceptance>,
     bootstrap_target: Option<BootstrapTarget>,
     relay_peers: BTreeSet<PeerId>,
+    relayed_application_peers: BTreeSet<PeerId>,
     pending_relay_dials: BTreeMap<PeerId, (PeerId, Multiaddr)>,
     pending_relay_reservations: BTreeMap<PeerId, Multiaddr>,
 }
@@ -268,6 +270,7 @@ impl NetworkNode {
             allowed_users,
             revocations,
             authenticated: BTreeSet::new(),
+            authentication_sent: BTreeSet::new(),
             accepted_by_remote: BTreeSet::new(),
             sync_started: BTreeSet::new(),
             provisional: BTreeMap::new(),
@@ -277,6 +280,7 @@ impl NetworkNode {
             pending_acceptances: BTreeMap::new(),
             bootstrap_target: None,
             relay_peers: BTreeSet::new(),
+            relayed_application_peers: BTreeSet::new(),
             pending_relay_dials: BTreeMap::new(),
             pending_relay_reservations: BTreeMap::new(),
         })
@@ -538,7 +542,12 @@ impl NetworkNode {
                     if self.relay_peers.contains(&peer_id) {
                         return Ok(NetworkEvent::RelayConnected(peer_id));
                     }
-                    if !self.authenticated.contains(&peer_id) {
+                    if endpoint.is_relayed() {
+                        self.relayed_application_peers.insert(peer_id);
+                    }
+                    if !self.authenticated.contains(&peer_id)
+                        && self.authentication_sent.insert(peer_id)
+                    {
                         self.send(
                             peer_id,
                             NetworkRequest::Authenticate {
@@ -563,6 +572,7 @@ impl NetworkNode {
                         return Ok(NetworkEvent::RelayDisconnected(peer_id));
                     }
                     self.authenticated.remove(&peer_id);
+                    self.authentication_sent.remove(&peer_id);
                     self.accepted_by_remote.remove(&peer_id);
                     self.sync_started.remove(&peer_id);
                     self.provisional.remove(&peer_id);
@@ -581,6 +591,20 @@ impl NetworkNode {
                 {
                     return Ok(NetworkEvent::RelayConnectionFailed {
                         relay: peer_id,
+                        reason: format!("{error:?}"),
+                    });
+                }
+                SwarmEvent::OutgoingConnectionError {
+                    peer_id: Some(peer),
+                    error,
+                    ..
+                } if self.relayed_application_peers.contains(&peer) => {
+                    // DCUtR's direct candidates are supplemental to an already
+                    // established relay path. Their errors can arrive after the
+                    // application peer has cleanly closed that path, so connection
+                    // state alone cannot distinguish them from a primary dial.
+                    return Ok(NetworkEvent::HolePunchFailed {
+                        peer,
                         reason: format!("{error:?}"),
                     });
                 }

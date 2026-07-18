@@ -1,6 +1,6 @@
 # ADR 0016: Relay-assisted hole punching with bounded fallback
 
-Status: accepted and implemented locally; physical cross-NAT measurement pending
+Status: accepted, implemented and physically measured across two NATs
 
 ## Context
 
@@ -69,3 +69,30 @@ requires Gate B data-flow review, retention decisions, monitoring, abuse handlin
 legal classification and production identity/key management. Physical testing
 must use separately approved infrastructure; a borrowed application server is
 not implicitly authorized to carry ChatCommons traffic.
+
+## Physical measurement
+
+On 2026-07-18, a macOS node on a phone hotspot and a Windows/WSL node on a
+separate home connection completed invitation bootstrap through an independently
+operated IPFS Circuit Relay v2 peer. Kubo was used only to discover a public peer
+that explicitly advertised the Relay v2 hop protocol; it was stopped before the
+ChatCommons connection. Tailscale carried the SSH control session only and its
+addresses did not appear in the invitation route or application connection.
+
+Both peers connected with `via=relay`, authenticated devices, proved the invite
+capability, accepted the member and persisted the same five-event ancestry. The
+relay observed different public IPv4 endpoints for the two networks. A direct
+candidate timed out for this NAT combination, after which the relay fallback
+remained available and the serving node stayed alive.
+
+The measurement exposed and fixed two ordering defects: a delayed DCUtR candidate
+failure after clean application disconnect was incorrectly fatal, and multiple
+connections to one Peer could start duplicate authentication and bootstrap
+exchanges. Supplemental dial errors are now reported as hole-punch failures,
+authentication is started once per connected Peer, and repeated ancestry after
+the first validated response is handled idempotently.
+
+This proves the fallback path for one real network pair; it is not a success-rate
+claim. A broader NAT/firewall matrix, sustained sessions and traffic accounting
+remain future measurement work. The discovered third-party relay is not a
+ChatCommons default or an operated project service.

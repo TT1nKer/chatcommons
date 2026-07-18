@@ -321,14 +321,17 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
                 invitation,
                 events,
             } => {
+                if prepared.is_none() {
+                    println!("DUPLICATE_BOOTSTRAP_ANCESTRY={peer}");
+                    io::stdout().flush()?;
+                    continue;
+                }
                 let invitation_event = events
                     .iter()
                     .find(|event| event.event_id == invitation)
                     .ok_or(CliError::MissingInvitation)?;
-                let validated = prepared
-                    .take()
-                    .ok_or(CliError::MissingInvitation)?
-                    .validate(invitation_event)?;
+                let prepared_invitation = prepared.take().ok_or(CliError::MissingInvitation)?;
+                let validated = prepared_invitation.validate(invitation_event)?;
                 let resolution = resolve(&events)?;
                 if !resolution
                     .snapshot
