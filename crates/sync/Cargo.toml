@@ -5,10 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+base64.workspace = true
 blake3.workspace = true
 futures.workspace = true
 hex.workspace = true
 libp2p.workspace = true
+rand_core.workspace = true
 chatcommons-crypto = { path = "../crypto" }
 chatcommons-node-core = { path = "../node-core" }
 chatcommons-protocol = { path = "../protocol" }

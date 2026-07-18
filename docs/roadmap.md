@@ -67,7 +67,7 @@ certificates against transport Peer IDs and an allowed-user set, and converge
 independent SQLite databases. See
 [`ADR 0011`](adr/0011-minimal-direct-quic-sync.md).
 
-## M2c — diagnostic direct node (implemented locally)
+## M2c — diagnostic direct node (implemented)
 
 - Unix-only local user/device key persistence with private filesystem modes
 - `init`, `info`, `create-community`, and `run` commands
@@ -79,11 +79,25 @@ Physical two-machine measurement remains pending. The executable is deliberately
 not an end-user client and must not be exposed as a public service. See
 [`ADR 0014`](adr/0014-m2c-diagnostic-node.md).
 
-## Suggested M2d
+## M2d — secure invitation bootstrap (implemented locally)
 
-Design secure invitation bootstrap without bypassing community admission: a new
-member must be able to authenticate narrowly enough to fetch required invitation
-ancestry and publish acceptance, but must not gain ordinary synchronization access
-before the profile authorizes them. Address discovery and a replaceable relay come
-after direct two-machine measurements. Do not add voice, files, or generic policy
-machinery yet.
+- one bounded `cc1_` code wraps the existing private invite package and one
+  explicit Peer ID/direct QUIC address
+- a device-bound random challenge proves capability possession before ancestry
+  is disclosed
+- pre-membership access is limited to invitation ancestry and one acceptance
+  candidate
+- both sides apply the chat profile before promoting the connection to ordinary
+  synchronization
+- forged capabilities and repeated redemption are rejected in a real two-process
+  QUIC test
+
+Public two-machine measurement remains pending. See
+[`ADR 0015`](adr/0015-secure-invitation-bootstrap.md).
+
+## Suggested M2e
+
+Measure M2d between a local client and a temporary public Linux endpoint using
+only a few text events, then remove the endpoint state. If direct QUIC is stable,
+design multiple replaceable bootstrap endpoints and hole punching before any
+relay. Do not add voice, files, discovery services or generic policy machinery.

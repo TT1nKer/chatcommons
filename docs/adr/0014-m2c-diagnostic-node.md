@@ -1,6 +1,6 @@
 # ADR 0014: M2c diagnostic direct node
 
-Status: accepted and implemented locally; physical two-machine measurement pending
+Status: accepted and implemented; physical two-machine measurement pending
 
 ## Context
 

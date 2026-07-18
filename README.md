@@ -3,20 +3,21 @@
 ChatCommons is an open, offline-first protocol for community-owned chat. Its
 goal is simple: your community, your rules, your chat. The current workspace
 contains protocol v2, one deliberately small reference chat profile, single-use
-bearer invitations, and minimal direct QUIC synchronization. It contains no
-hosted service, release binary, voice implementation, or GUI.
+bearer invitations, secure direct invitation bootstrap, and minimal direct QUIC
+synchronization. It contains no hosted service, release binary, voice
+implementation, or GUI.
 
 ## Workspace
 
 - `chatcommons-crypto`: Ed25519 identities and byte-level verification
-- `chatcommons-cli`: Unix-only M2c diagnostic node executable
+- `chatcommons-cli`: Unix-only M2c/M2d diagnostic node executable
 - `chatcommons-protocol`: opaque signed envelopes, canonical encoding, parsing and IDs
 - `chatcommons-storage`: idempotent SQLite event persistence
 - `chatcommons-node-core`: generic DAG validation and local ingestion
 - `chatcommons-profile-chat`: the optional `chatcommons.chat.v1` reference semantics
 - `chatcommons-sync`: bounded DAG synchronization and authenticated direct QUIC
 
-## M2c diagnostic node
+## M2c/M2d diagnostic node
 
 The current executable is a developer connectivity tool, not an end-user client.
 It persists plaintext development keys only on Unix, with a `0700` state
@@ -26,25 +27,38 @@ production identities.
 ```sh
 cargo run --bin chatcommons-node -- init --state <node-a-directory>
 cargo run --bin chatcommons-node -- init --state <node-b-directory>
-cargo run --bin chatcommons-node -- create-community +  --state <node-a-directory> --name "Friends"
+cargo run --bin chatcommons-node -- create-community \
+  --state <node-a-directory> --name "Friends"
 ```
 
-Exchange the printed User IDs out of band. Start node A:
+Create a single-use invite containing node A's reachable QUIC address:
 
 ```sh
-cargo run --bin chatcommons-node -- run +  --state <node-a-directory> +  --community <community-id> +  --listen /ip4/<node-a-ip>/udp/0/quic-v1 +  --allow-user <node-b-user-id>
+cargo run --bin chatcommons-node -- create-invite \
+  --state <node-a-directory> \
+  --community <community-id> \
+  --address /ip4/<node-a-public-ip>/udp/4001/quic-v1
 ```
 
-Copy node A's printed `PEER_ID` and `LISTEN_ADDRESS`, then dial it from node B:
+Start node A at the same address and let node B join using only `INVITE_CODE`:
 
 ```sh
-cargo run --bin chatcommons-node -- run +  --state <node-b-directory> +  --community <community-id> +  --listen /ip4/0.0.0.0/udp/0/quic-v1 +  --allow-user <node-a-user-id> +  --dial-peer <node-a-peer-id> +  --dial-address <node-a-listen-address>
+cargo run --bin chatcommons-node -- run \
+  --state <node-a-directory> \
+  --community <community-id> \
+  --listen /ip4/0.0.0.0/udp/4001/quic-v1
+
+cargo run --bin chatcommons-node -- join \
+  --state <node-b-directory> \
+  --invite-code <cc1-code>
 ```
 
-The command has no discovery, hole punching, relay, process lock, or secure
-invitation bootstrap. Run only one process per state directory and do not expose
-the diagnostic listener to untrusted networks. See
-[ADR 0014](docs/adr/0014-m2c-diagnostic-node.md).
+The code contains a bearer secret and the diagnostic CLI exposes it in terminal
+and process arguments. Use development identities only. The command has no
+discovery, hole punching, relay or process lock. Run one process per state
+directory and restrict the diagnostic listener to a test environment. See
+[ADR 0014](docs/adr/0014-m2c-diagnostic-node.md) and
+[ADR 0015](docs/adr/0015-secure-invitation-bootstrap.md).
 
 Run all quality gates:
 

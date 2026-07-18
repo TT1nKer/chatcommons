@@ -55,11 +55,14 @@ Invite package JSON is parsed separately from validation, has a 4 KiB limit, and
 must match a cryptographically valid invitation event before an acceptance can be
 created. This package check proves correspondence, not administrator authority;
 the invitation and acceptance receive final authorization only when the profile
-resolves them with the complete community event set. Expiry, cancellation, URL
-wrapping, bootstrap addresses and contacts are deliberately deferred. A community
-that wants another admission model must select or define a different profile;
-Core does not impose this policy globally. See
-[`ADR 0012`](adr/0012-single-use-bearer-invitations.md).
+resolves them with the complete community event set. Expiry, cancellation and
+contacts are deliberately deferred. M2d can wrap the unchanged package with one
+explicit direct endpoint and uses a restricted challenge flow to fetch invitation
+ancestry without granting ordinary synchronization. A community that wants
+another admission model must select or define a different profile; Core does not
+impose this policy globally. See
+[`ADR 0012`](adr/0012-single-use-bearer-invitations.md) and
+[`ADR 0015`](adr/0015-secure-invitation-bootstrap.md).
 
 ## Resource limits
 

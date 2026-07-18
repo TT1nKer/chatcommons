@@ -1,13 +1,19 @@
 use chatcommons_cli::NodeState;
 use chatcommons_crypto::UserId;
 use chatcommons_node_core::{CoreNode, NodeError};
-use chatcommons_profile_chat::{ChatError, create_chat_genesis};
+use chatcommons_profile_chat::{
+    ChatError, InviteCapability, InviteError, create_chat_event, create_chat_genesis,
+    parse_invite_package, resolve,
+};
 use chatcommons_protocol::{CommunityId, ProtocolError, community_id};
 use chatcommons_storage::{EventStore, StorageError};
 use chatcommons_sync::{
     SyncError, SyncPeer,
     auth::{RevocationSet, create_device_certificate},
-    network::{NetworkError, NetworkEvent, NetworkNode},
+    bootstrap::{BootstrapError, create_code, parse_code},
+    network::{
+        BootstrapGrant, MAX_BOOTSTRAP_ANCESTRY_EVENTS, NetworkError, NetworkEvent, NetworkNode,
+    },
 };
 use libp2p::{Multiaddr, PeerId};
 use std::{
@@ -20,18 +26,20 @@ use std::{
 };
 use thiserror::Error;
 
-const USAGE: &str = r#"ChatCommons M2c diagnostic node
+const USAGE: &str = r#"ChatCommons M2c/M2d diagnostic node
 
 Usage:
   chatcommons-node init --state <directory>
   chatcommons-node info --state <directory>
   chatcommons-node create-community --state <directory> --name <name>
+  chatcommons-node create-invite --state <directory> --community <hex>
+    --address <public-multiaddr>
+  chatcommons-node join --state <directory> --invite-code <code>
   chatcommons-node run --state <directory> --community <hex>
-    --listen <multiaddr> --allow-user <user-id-hex> [--allow-user <hex> ...]
+    --listen <multiaddr> [--allow-user <user-id-hex> ...]
     [--dial-peer <peer-id> --dial-address <multiaddr>] [--exit-after-events <count>]
 
-This is a developer tool. It has no discovery, NAT traversal, relay, or secure
-invitation bootstrap. Exchange UserId, PeerId, and address out of band.
+This is a developer tool. It has no discovery, NAT traversal, relay, or GUI.
 "#;
 const MAX_ALLOWED_USERS: usize = 256;
 
@@ -55,6 +63,10 @@ enum CliError {
     Node(#[from] NodeError),
     #[error("chat profile failed: {0}")]
     Chat(#[from] ChatError),
+    #[error("invitation failed: {0}")]
+    Invite(#[from] InviteError),
+    #[error("bootstrap failed: {0}")]
+    Bootstrap(#[from] BootstrapError),
     #[error("protocol failed: {0}")]
     Protocol(#[from] ProtocolError),
     #[error("sync failed: {0}")]
@@ -65,6 +77,12 @@ enum CliError {
     WrongDatabaseCommunity,
     #[error("database already contains a community")]
     DatabaseNotEmpty,
+    #[error("chat profile did not authorize the requested operation")]
+    ProfileRejected,
+    #[error("bootstrap response did not contain the expected invitation")]
+    MissingInvitation,
+    #[error("bootstrap endpoint is not an active community member")]
+    UntrustedBootstrapEndpoint,
     #[error("output failed: {0}")]
     Output(#[from] io::Error),
 }
@@ -148,6 +166,8 @@ async fn run() -> Result<(), CliError> {
         "init" => command_init(&options),
         "info" => command_info(&options),
         "create-community" => command_create_community(&options),
+        "create-invite" => command_create_invite(&options),
+        "join" => command_join(&options).await,
         "run" => command_run(&options).await,
         _ => Err(CliError::Arguments(format!("unknown command {command}"))),
     }
@@ -180,6 +200,156 @@ fn command_create_community(options: &Options) -> Result<(), CliError> {
     Ok(())
 }
 
+fn command_create_invite(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--community", "--address"])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let address = parse_multiaddr(options.require_one("--address")?)?;
+    let store = EventStore::open(state.database_path())?;
+    let mut core = CoreNode::open(store, Some(community))?;
+    let existing = core.all_events()?;
+    let capability = InviteCapability::generate();
+    let invitation = create_chat_event(
+        state.user(),
+        community,
+        core.heads()?,
+        now_ms()?,
+        capability.invitation_payload(),
+    )?;
+    let mut candidates = existing;
+    candidates.push(invitation.clone());
+    let resolution = resolve(&candidates)?;
+    if !resolution.snapshot.event_ids.contains(&invitation.event_id)
+        || !resolution
+            .snapshot
+            .active_invitations
+            .contains_key(&invitation.event_id)
+    {
+        return Err(CliError::ProfileRejected);
+    }
+    let package = capability.encode_package(community, invitation.event_id)?;
+    let code = create_code(package, state.device().peer_id(), &address)?;
+    core.ingest(vec![invitation.clone()])?;
+    println!(
+        "INVITATION_ID={}",
+        hex::encode(invitation.event_id.as_bytes())
+    );
+    println!("INVITE_CODE={code}");
+    io::stdout().flush()?;
+    Ok(())
+}
+
+async fn command_join(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--invite-code"])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let envelope = parse_code(options.require_one("--invite-code")?)?.validate()?;
+    let prepared = parse_invite_package(envelope.invite_package())?.prepare()?;
+    let community = prepared.community();
+    let invitation = prepared.invitation();
+    let store = EventStore::open(state.database_path())?;
+    if !store.is_empty()? {
+        return Err(CliError::DatabaseNotEmpty);
+    }
+    let core = CoreNode::open(store, None)?;
+    let certificate =
+        create_device_certificate(state.user(), state.device(), state.created_at_ms());
+    let mut network = NetworkNode::new(
+        state.device(),
+        certificate,
+        SyncPeer::new(core, community)?,
+        BTreeSet::new(),
+        RevocationSet::default(),
+    )?;
+    let peer = envelope.peer_id();
+    network.configure_bootstrap_target(peer, invitation)?;
+    network.dial(peer, envelope.address().clone())?;
+    println!("COMMUNITY_ID={}", hex::encode(community.as_bytes()));
+    println!("BOOTSTRAP_PEER={peer}");
+    io::stdout().flush()?;
+
+    let mut prepared = Some(prepared);
+    loop {
+        match network.next_event().await? {
+            NetworkEvent::Connected(peer) => println!("CONNECTED={peer}"),
+            NetworkEvent::Authenticated(peer) => println!("AUTHENTICATED={peer}"),
+            NetworkEvent::SyncProgress(peer) => println!("SYNC_PROGRESS={peer}"),
+            NetworkEvent::BootstrapChallenge {
+                peer,
+                invitation,
+                proof_bytes,
+            } => {
+                let signature = prepared
+                    .as_ref()
+                    .ok_or(CliError::MissingInvitation)?
+                    .sign_possession_proof(&proof_bytes)
+                    .to_vec();
+                network.submit_bootstrap_proof(peer, invitation, signature)?;
+                println!("BOOTSTRAP_PROOF_SENT={peer}");
+            }
+            NetworkEvent::BootstrapAncestry {
+                peer,
+                invitation,
+                events,
+            } => {
+                let invitation_event = events
+                    .iter()
+                    .find(|event| event.event_id == invitation)
+                    .ok_or(CliError::MissingInvitation)?;
+                let validated = prepared
+                    .take()
+                    .ok_or(CliError::MissingInvitation)?
+                    .validate(invitation_event)?;
+                let resolution = resolve(&events)?;
+                if !resolution
+                    .snapshot
+                    .active_invitations
+                    .contains_key(&invitation)
+                {
+                    return Err(CliError::ProfileRejected);
+                }
+                let endpoint_user = network
+                    .provisional_user(peer)
+                    .ok_or(CliError::UntrustedBootstrapEndpoint)?;
+                if !resolution.snapshot.members.contains(&endpoint_user) {
+                    return Err(CliError::UntrustedBootstrapEndpoint);
+                }
+                network.approve_bootstrap_endpoint(peer)?;
+                network.sync_peer_mut().node_mut().ingest(events.clone())?;
+                let acceptance =
+                    validated.create_acceptance(state.user(), vec![invitation], now_ms()?)?;
+                let mut with_acceptance = events;
+                with_acceptance.push(acceptance.clone());
+                let accepted = resolve(&with_acceptance)?;
+                if !accepted.snapshot.event_ids.contains(&acceptance.event_id)
+                    || !accepted.snapshot.members.contains(&state.user().user_id())
+                {
+                    return Err(CliError::ProfileRejected);
+                }
+                network
+                    .sync_peer_mut()
+                    .node_mut()
+                    .ingest(vec![acceptance.clone()])?;
+                network.submit_bootstrap_acceptance(peer, invitation, acceptance)?;
+                println!("BOOTSTRAP_ACCEPTANCE_SENT={peer}");
+            }
+            NetworkEvent::BootstrapAccepted(peer) => {
+                println!("JOIN_COMPLETE={peer}");
+                io::stdout().flush()?;
+                return Ok(());
+            }
+            NetworkEvent::Disconnected(peer) => println!("DISCONNECTED={peer}"),
+            NetworkEvent::RequestFailed { reason, .. } => {
+                return Err(CliError::Network(NetworkError::Request(reason)));
+            }
+            NetworkEvent::Listening(address) => println!("LISTEN_ADDRESS={address}"),
+            NetworkEvent::BootstrapAcceptance { .. } => {
+                return Err(CliError::ProfileRejected);
+            }
+        }
+        io::stdout().flush()?;
+    }
+}
+
 async fn command_run(options: &Options) -> Result<(), CliError> {
     options.allow_only(&[
         "--state",
@@ -193,7 +363,7 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
     let state = NodeState::load(options.require_one("--state")?)?;
     let community = parse_community(options.require_one("--community")?)?;
     let listen = parse_multiaddr(options.require_one("--listen")?)?;
-    let allowed_users = parse_allowed_users(options.many("--allow-user"))?;
+    let mut allowed_users = parse_allowed_users(options.many("--allow-user"))?;
     let dial = parse_dial(options)?;
     let exit_after_events = options
         .optional_one("--exit-after-events")?
@@ -213,6 +383,16 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
             Some(community)
         },
     )?;
+    let profile = resolve(&core.all_events()?)?;
+    allowed_users.extend(profile.snapshot.members.iter().copied());
+    let mut bootstrap_grants = Vec::new();
+    for (invitation, capability_public_key) in profile.snapshot.active_invitations {
+        bootstrap_grants.push(BootstrapGrant {
+            invitation,
+            capability_public_key,
+            ancestry: core.ancestry(invitation, MAX_BOOTSTRAP_ANCESTRY_EVENTS)?,
+        });
+    }
     let certificate =
         create_device_certificate(state.user(), state.device(), state.created_at_ms());
     let mut network = NetworkNode::new(
@@ -222,6 +402,9 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
         allowed_users,
         RevocationSet::default(),
     )?;
+    for grant in bootstrap_grants {
+        network.register_bootstrap_grant(grant)?;
+    }
     let peer_id = network.peer_id();
     println!("USER_ID={}", hex::encode(state.user().user_id().as_bytes()));
     println!("PEER_ID={peer_id}");
@@ -234,19 +417,57 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
 
     loop {
         let event = network.next_event().await?;
-        match &event {
+        let sync_progress = matches!(
+            &event,
+            NetworkEvent::Authenticated(_) | NetworkEvent::SyncProgress(_)
+        );
+        match event {
             NetworkEvent::Listening(address) => println!("LISTEN_ADDRESS={address}"),
             NetworkEvent::Connected(peer) => println!("CONNECTED={peer}"),
             NetworkEvent::Authenticated(peer) => println!("AUTHENTICATED={peer}"),
             NetworkEvent::SyncProgress(peer) => println!("SYNC_PROGRESS={peer}"),
             NetworkEvent::Disconnected(peer) => println!("DISCONNECTED={peer}"),
+            NetworkEvent::RequestFailed { peer, reason } => {
+                println!("REQUEST_FAILED={peer} reason={reason}")
+            }
+            NetworkEvent::BootstrapChallenge { peer, .. } => {
+                println!("UNEXPECTED_BOOTSTRAP_CHALLENGE={peer}")
+            }
+            NetworkEvent::BootstrapAncestry { peer, .. } => {
+                println!("UNEXPECTED_BOOTSTRAP_ANCESTRY={peer}")
+            }
+            NetworkEvent::BootstrapAccepted(peer) => {
+                println!("UNEXPECTED_BOOTSTRAP_ACCEPTED={peer}")
+            }
+            NetworkEvent::BootstrapAcceptance {
+                peer,
+                user_id,
+                invitation,
+                acceptance,
+            } => {
+                let mut candidates = network.sync_peer().node().all_events()?;
+                candidates.push(acceptance.as_ref().clone());
+                let resolution = resolve(&candidates)?;
+                let approved = resolution.snapshot.event_ids.contains(&acceptance.event_id)
+                    && resolution.snapshot.members.contains(&user_id)
+                    && !resolution
+                        .snapshot
+                        .active_invitations
+                        .contains_key(&invitation);
+                if approved {
+                    network
+                        .sync_peer_mut()
+                        .node_mut()
+                        .ingest(vec![*acceptance])?;
+                }
+                network.resolve_bootstrap_acceptance(peer, approved)?;
+                println!("BOOTSTRAP_DECISION={peer} approved={approved}");
+            }
         }
         io::stdout().flush()?;
-        if matches!(
-            event,
-            NetworkEvent::Authenticated(_) | NetworkEvent::SyncProgress(_)
-        ) && exit_after_events
-            .is_some_and(|count| network.sync_peer().node().event_ids().len() >= count)
+        if sync_progress
+            && exit_after_events
+                .is_some_and(|count| network.sync_peer().node().event_ids().len() >= count)
         {
             println!(
                 "SYNC_COMPLETE events={}",
@@ -267,11 +488,6 @@ fn print_identity(state: &NodeState) -> Result<(), CliError> {
 }
 
 fn parse_allowed_users(values: &[String]) -> Result<BTreeSet<UserId>, CliError> {
-    if values.is_empty() {
-        return Err(CliError::Arguments(
-            "at least one --allow-user is required".into(),
-        ));
-    }
     if values.len() > MAX_ALLOWED_USERS {
         return Err(CliError::Arguments(format!(
             "at most {MAX_ALLOWED_USERS} --allow-user values are accepted"

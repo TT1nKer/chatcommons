@@ -16,6 +16,7 @@ edition = "2024"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
+base64 = "0.22"
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 futures = "0.3"
