@@ -67,10 +67,23 @@ certificates against transport Peer IDs and an allowed-user set, and converge
 independent SQLite databases. See
 [`ADR 0011`](adr/0011-minimal-direct-quic-sync.md).
 
-## Suggested M2c
+## M2c — diagnostic direct node (implemented locally)
 
-Add a minimal executable that persists device keys and dials an explicitly supplied
-IP/port/Peer ID. Then measure direct connectivity across two real machines.
-Persisting and distributing revocations must be decided before authentication is
-called production-ready. Add address discovery and a replaceable relay only after
-direct dialing is observable; do not add voice, files, or generic policy machinery.
+- Unix-only local user/device key persistence with private filesystem modes
+- `init`, `info`, `create-community`, and `run` commands
+- explicit listen address, Peer ID, dial address, and bounded user allowlist
+- observable connection, mutual authentication and synchronization progress
+- a two-process integration test over real loopback QUIC and independent SQLite
+
+Physical two-machine measurement remains pending. The executable is deliberately
+not an end-user client and must not be exposed as a public service. See
+[`ADR 0014`](adr/0014-m2c-diagnostic-node.md).
+
+## Suggested M2d
+
+Design secure invitation bootstrap without bypassing community admission: a new
+member must be able to authenticate narrowly enough to fetch required invitation
+ancestry and publish acceptance, but must not gain ordinary synchronization access
+before the profile authorizes them. Address discovery and a replaceable relay come
+after direct two-machine measurements. Do not add voice, files, or generic policy
+machinery yet.

@@ -1,4 +1,5 @@
 /target
+/.chatcommons/
 
 # Local environment and secrets. Commit only documented placeholders.
 .env

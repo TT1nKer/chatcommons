@@ -11,6 +11,10 @@ pub const SIGNATURE_LEN: usize = 64;
 pub struct UserId([u8; 32]);
 
 impl UserId {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub fn from_public_key(public_key: &[u8; PUBLIC_KEY_LEN]) -> Self {
         Self(*blake3::hash(public_key).as_bytes())
     }
