@@ -130,14 +130,45 @@ impl ParsedBootstrapEnvelope {
 }
 
 fn validate_address(address: &Multiaddr) -> Result<(), BootstrapError> {
-    if address.iter().next().is_none()
-        || address
-            .iter()
-            .any(|protocol| matches!(protocol, Protocol::P2p(_)))
-    {
+    let protocols: Vec<_> = address.iter().collect();
+    if protocols.is_empty() {
         return Err(BootstrapError::InvalidAddress);
     }
-    Ok(())
+    let peer_positions: Vec<_> = protocols
+        .iter()
+        .enumerate()
+        .filter_map(|(index, protocol)| matches!(protocol, Protocol::P2p(_)).then_some(index))
+        .collect();
+    let circuit_positions: Vec<_> = protocols
+        .iter()
+        .enumerate()
+        .filter_map(|(index, protocol)| matches!(protocol, Protocol::P2pCircuit).then_some(index))
+        .collect();
+
+    let direct_quic = peer_positions.is_empty()
+        && circuit_positions.is_empty()
+        && matches!(protocols.last(), Some(Protocol::QuicV1))
+        && protocols
+            .iter()
+            .any(|protocol| matches!(protocol, Protocol::Udp(_)));
+    let relay_route = peer_positions.len() == 1
+        && circuit_positions.len() == 1
+        && circuit_positions[0] + 1 == protocols.len()
+        && peer_positions[0] + 1 == circuit_positions[0]
+        && (protocols[..peer_positions[0]]
+            .iter()
+            .any(|protocol| matches!(protocol, Protocol::Tcp(_)))
+            || (protocols[..peer_positions[0]]
+                .iter()
+                .any(|protocol| matches!(protocol, Protocol::Udp(_)))
+                && protocols[..peer_positions[0]]
+                    .iter()
+                    .any(|protocol| matches!(protocol, Protocol::QuicV1))));
+    if direct_quic || relay_route {
+        Ok(())
+    } else {
+        Err(BootstrapError::InvalidAddress)
+    }
 }
 
 impl ValidatedBootstrapEnvelope {
@@ -203,5 +234,23 @@ mod tests {
             parse_code(&code),
             Err(BootstrapError::CodeTooLarge)
         ));
+    }
+
+    #[test]
+    fn relay_route_round_trips_and_malformed_routes_are_rejected()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let endpoint = identity::Keypair::generate_ed25519().public().to_peer_id();
+        let relay = identity::Keypair::generate_ed25519().public().to_peer_id();
+        let route: Multiaddr =
+            format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay}/p2p-circuit").parse()?;
+        let code = create_code(vec![1], endpoint, &route)?;
+        assert_eq!(parse_code(&code)?.validate()?.address(), &route);
+
+        let missing_relay: Multiaddr = "/ip4/127.0.0.1/tcp/4001/p2p-circuit".parse()?;
+        assert!(matches!(
+            create_code(vec![1], endpoint, &missing_relay),
+            Err(BootstrapError::InvalidAddress)
+        ));
+        Ok(())
     }
 }

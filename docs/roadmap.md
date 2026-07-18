@@ -31,10 +31,12 @@ Exit condition for public infrastructure is not yet met. It requires qualified
 legal review, service-specific data flows, policies, an incident runbook and
 implemented resource limits.
 
-## Explicitly deferred
+## Deferred from M1
 
 CRDT state resolution, MLS, libp2p, relays, attachments, voice, GUI, discovery,
-multi-device identity and large-community scaling are not part of M1.
+multi-device identity and large-community scaling were not part of M1. Later
+milestones may implement them independently; libp2p transport and a minimal relay
+fallback now exist in M2.
 
 Small desktop screen sharing has an accepted but deferred peer-assisted direction:
 an adaptive n-ary distribution tree with bounded voluntary upload and replaceable
@@ -95,9 +97,24 @@ not an end-user client and must not be exposed as a public service. See
 Public two-machine measurement remains pending. See
 [`ADR 0015`](adr/0015-secure-invitation-bootstrap.md).
 
-## Suggested M2e
+## M2e — relay-assisted NAT traversal (implemented locally)
 
-Measure M2d between a local client and a temporary public Linux endpoint using
-only a few text events, then remove the endpoint state. If direct QUIC is stable,
-design multiple replaceable bootstrap endpoints and hole punching before any
-relay. Do not add voice, files, discovery services or generic policy machinery.
+- direct QUIC remains the preferred path
+- a validated invite may contain one Relay v2 circuit route
+- Identify supplies observed addresses and DCUtR attempts a direct upgrade
+- the relay circuit remains usable when direct candidates fail
+- relay peers are infrastructure peers and never receive community authentication
+- the diagnostic relay enforces circuit, byte, duration and rate bounds
+- real in-process and three-process tests cover fallback and direct upgrade
+
+Physical cross-NAT measurement remains pending because no public relay has been
+approved for this project. The included relay has an ephemeral identity and is
+not a public-service binary. See
+[`ADR 0016`](adr/0016-relay-assisted-hole-punching.md).
+
+## Suggested M2f
+
+Measure the existing M2e path between two physical networks using a separately
+approved relay, record direct-upgrade success and fallback behavior, and remove
+all temporary endpoint state afterward. Do not add discovery, voice, files or a
+public relay operation until their respective engineering gates are met.

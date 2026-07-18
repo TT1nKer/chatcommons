@@ -6,9 +6,10 @@ use chatcommons_crypto::{PUBLIC_KEY_LEN, SIGNATURE_LEN, UserId, verify};
 use chatcommons_protocol::{EventId, SignedEvent, author_id, validate_event};
 use futures::StreamExt;
 use libp2p::{
-    Multiaddr, PeerId, StreamProtocol, Swarm, SwarmBuilder,
+    Multiaddr, PeerId, StreamProtocol, Swarm, SwarmBuilder, dcutr, identify, noise, ping, relay,
     request_response::{self, ProtocolSupport},
-    swarm::SwarmEvent,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, yamux,
 };
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -19,8 +20,18 @@ pub const NETWORK_PROTOCOL: &str = "/chatcommons/sync/1";
 pub const MAX_NETWORK_FRAME_BYTES: u64 = 1024 * 1024;
 pub const MAX_MESSAGES_PER_FRAME: usize = 64;
 pub const MAX_BOOTSTRAP_ANCESTRY_EVENTS: usize = 256;
+pub const IDENTIFY_PROTOCOL: &str = "/chatcommons/node/1";
 
-type Behaviour = request_response::json::Behaviour<NetworkRequest, NetworkResponse>;
+type RequestResponse = request_response::json::Behaviour<NetworkRequest, NetworkResponse>;
+
+#[derive(NetworkBehaviour)]
+struct Behaviour {
+    request_response: RequestResponse,
+    relay_client: relay::client::Behaviour,
+    identify: identify::Behaviour,
+    ping: ping::Behaviour,
+    dcutr: dcutr::Behaviour,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum NetworkRequest {
@@ -81,7 +92,30 @@ pub enum RejectionCode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkEvent {
     Listening(Multiaddr),
-    Connected(PeerId),
+    Connected {
+        peer: PeerId,
+        relayed: bool,
+    },
+    RelayConnected(PeerId),
+    RelayDisconnected(PeerId),
+    RelayReservationAccepted(PeerId),
+    RelayCircuitEstablished {
+        relay: Option<PeerId>,
+        remote: Option<PeerId>,
+    },
+    RelayConnectionFailed {
+        relay: Option<PeerId>,
+        reason: String,
+    },
+    ObservedAddress {
+        peer: PeerId,
+        address: Multiaddr,
+    },
+    HolePunchSucceeded(PeerId),
+    HolePunchFailed {
+        peer: PeerId,
+        reason: String,
+    },
     Authenticated(PeerId),
     SyncProgress(PeerId),
     BootstrapChallenge {
@@ -118,6 +152,8 @@ pub enum NetworkError {
     Listen(String),
     #[error("network dial failed: {0}")]
     Dial(String),
+    #[error("network transport setup failed: {0}")]
+    Transport(String),
     #[error("request-response operation failed: {0}")]
     Request(String),
     #[error("remote peer rejected the request: {0:?}")]
@@ -177,6 +213,9 @@ pub struct NetworkNode {
     proved_bootstraps: BTreeMap<PeerId, ProvedBootstrap>,
     pending_acceptances: BTreeMap<PeerId, PendingAcceptance>,
     bootstrap_target: Option<BootstrapTarget>,
+    relay_peers: BTreeSet<PeerId>,
+    pending_relay_dials: BTreeMap<PeerId, (PeerId, Multiaddr)>,
+    pending_relay_reservations: BTreeMap<PeerId, Multiaddr>,
 }
 
 impl NetworkNode {
@@ -193,19 +232,35 @@ impl NetworkNode {
         let codec = request_response::json::codec::Codec::default()
             .set_request_size_maximum(MAX_NETWORK_FRAME_BYTES)
             .set_response_size_maximum(MAX_NETWORK_FRAME_BYTES);
-        let behaviour = request_response::Behaviour::with_codec(
+        let request_response = request_response::Behaviour::with_codec(
             codec,
             [(StreamProtocol::new(NETWORK_PROTOCOL), ProtocolSupport::Full)],
             request_response::Config::default(),
         );
         let builder = SwarmBuilder::with_existing_identity(device.keypair())
             .with_tokio()
+            .with_tcp(
+                tcp::Config::default().nodelay(true),
+                noise::Config::new,
+                yamux::Config::default,
+            )
+            .map_err(|error| NetworkError::Transport(error.to_string()))?
             .with_quic()
-            .with_behaviour(|_| behaviour);
-        let builder = match builder {
-            Ok(builder) => builder,
-            Err(error) => match error {},
-        };
+            .with_dns()
+            .map_err(|error| NetworkError::Transport(error.to_string()))?
+            .with_relay_client(noise::Config::new, yamux::Config::default)
+            .map_err(|error| NetworkError::Transport(error.to_string()))?
+            .with_behaviour(|keypair, relay_client| Behaviour {
+                request_response,
+                relay_client,
+                identify: identify::Behaviour::new(identify::Config::new(
+                    IDENTIFY_PROTOCOL.to_owned(),
+                    keypair.public(),
+                )),
+                ping: ping::Behaviour::new(ping::Config::new()),
+                dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),
+            })
+            .map_err(|error| NetworkError::Transport(error.to_string()))?;
         Ok(Self {
             swarm: builder.build(),
             sync,
@@ -221,6 +276,9 @@ impl NetworkNode {
             proved_bootstraps: BTreeMap::new(),
             pending_acceptances: BTreeMap::new(),
             bootstrap_target: None,
+            relay_peers: BTreeSet::new(),
+            pending_relay_dials: BTreeMap::new(),
+            pending_relay_reservations: BTreeMap::new(),
         })
     }
 
@@ -235,7 +293,59 @@ impl NetworkNode {
             .map_err(|error| NetworkError::Listen(format!("{error:?}")))
     }
 
+    pub fn reserve_relay(&mut self, relay_address: Multiaddr) -> Result<Multiaddr, NetworkError> {
+        let relay = relay_peer_from_base(&relay_address)
+            .ok_or_else(|| NetworkError::Dial("relay address must end in its Peer ID".into()))?;
+        if relay_address
+            .iter()
+            .any(|protocol| matches!(protocol, libp2p::multiaddr::Protocol::P2pCircuit))
+        {
+            return Err(NetworkError::Dial(
+                "relay base address must not contain p2p-circuit".into(),
+            ));
+        }
+        self.relay_peers.insert(relay);
+        let circuit = relay_address
+            .clone()
+            .with(libp2p::multiaddr::Protocol::P2pCircuit);
+        if self.pending_relay_reservations.contains_key(&relay) {
+            return Err(NetworkError::Dial(
+                "a reservation with this relay is already pending".into(),
+            ));
+        }
+        self.pending_relay_reservations
+            .insert(relay, circuit.clone());
+        if let Err(error) = self.swarm.dial(relay_address) {
+            self.pending_relay_reservations.remove(&relay);
+            return Err(NetworkError::Dial(format!("{error:?}")));
+        }
+        Ok(circuit)
+    }
+
     pub fn dial(&mut self, peer: PeerId, mut address: Multiaddr) -> Result<(), NetworkError> {
+        if address
+            .iter()
+            .any(|protocol| matches!(protocol, libp2p::multiaddr::Protocol::P2pCircuit))
+        {
+            let relay = relay_peer_from_route(&address).ok_or_else(|| {
+                NetworkError::Dial("relay route does not identify its relay peer".into())
+            })?;
+            self.relay_peers.insert(relay);
+            let relay_base = relay_base_from_route(&address).ok_or_else(|| {
+                NetworkError::Dial("relay route has an invalid base address".into())
+            })?;
+            if self.pending_relay_dials.contains_key(&relay) {
+                return Err(NetworkError::Dial(
+                    "a dial through this relay is already pending".into(),
+                ));
+            }
+            self.pending_relay_dials.insert(relay, (peer, address));
+            if let Err(error) = self.swarm.dial(relay_base) {
+                self.pending_relay_dials.remove(&relay);
+                return Err(NetworkError::Dial(format!("{error:?}")));
+            }
+            return Ok(());
+        }
         address.push(libp2p::multiaddr::Protocol::P2p(peer));
         self.swarm
             .dial(address)
@@ -397,12 +507,14 @@ impl NetworkNode {
             self.authenticated.insert(peer);
             self.swarm
                 .behaviour_mut()
+                .request_response
                 .send_response(pending.channel, NetworkResponse::BootstrapAccepted)
                 .map_err(|_| NetworkError::Request("response channel closed".into()))?;
             self.maybe_start_sync(peer)?;
         } else {
             self.swarm
                 .behaviour_mut()
+                .request_response
                 .send_response(
                     pending.channel,
                     NetworkResponse::Rejected {
@@ -420,16 +532,36 @@ impl NetworkNode {
                 SwarmEvent::NewListenAddr { address, .. } => {
                     return Ok(NetworkEvent::Listening(address));
                 }
-                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    self.send(
-                        peer_id,
-                        NetworkRequest::Authenticate {
-                            certificate: self.certificate.clone(),
-                        },
-                    )?;
-                    return Ok(NetworkEvent::Connected(peer_id));
+                SwarmEvent::ConnectionEstablished {
+                    peer_id, endpoint, ..
+                } => {
+                    if self.relay_peers.contains(&peer_id) {
+                        return Ok(NetworkEvent::RelayConnected(peer_id));
+                    }
+                    if !self.authenticated.contains(&peer_id) {
+                        self.send(
+                            peer_id,
+                            NetworkRequest::Authenticate {
+                                certificate: self.certificate.clone(),
+                            },
+                        )?;
+                    }
+                    return Ok(NetworkEvent::Connected {
+                        peer: peer_id,
+                        relayed: endpoint.is_relayed(),
+                    });
                 }
-                SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                SwarmEvent::ConnectionClosed {
+                    peer_id,
+                    num_established,
+                    ..
+                } => {
+                    if num_established > 0 {
+                        continue;
+                    }
+                    if self.relay_peers.contains(&peer_id) {
+                        return Ok(NetworkEvent::RelayDisconnected(peer_id));
+                    }
                     self.authenticated.remove(&peer_id);
                     self.accepted_by_remote.remove(&peer_id);
                     self.sync_started.remove(&peer_id);
@@ -440,7 +572,25 @@ impl NetworkNode {
                     return Ok(NetworkEvent::Disconnected(peer_id));
                 }
                 SwarmEvent::Behaviour(event) => {
-                    return self.handle_behaviour(event);
+                    if let Some(event) = self.handle_behaviour(event)? {
+                        return Ok(event);
+                    }
+                }
+                SwarmEvent::OutgoingConnectionError { peer_id, error, .. }
+                    if peer_id.is_some_and(|peer| self.relay_peers.contains(&peer)) =>
+                {
+                    return Ok(NetworkEvent::RelayConnectionFailed {
+                        relay: peer_id,
+                        reason: format!("{error:?}"),
+                    });
+                }
+                SwarmEvent::OutgoingConnectionError {
+                    peer_id: Some(peer),
+                    ..
+                } if self.swarm.is_connected(&peer) => {
+                    // DCUtR may fail individual direct candidates while the authenticated
+                    // relayed connection remains usable. Its own behaviour emits the final
+                    // success or failure after the bounded retry sequence.
                 }
                 SwarmEvent::OutgoingConnectionError { error, .. } => {
                     return Err(NetworkError::Dial(format!("{error:?}")));
@@ -454,6 +604,58 @@ impl NetworkNode {
     }
 
     fn handle_behaviour(
+        &mut self,
+        event: BehaviourEvent,
+    ) -> Result<Option<NetworkEvent>, NetworkError> {
+        match event {
+            BehaviourEvent::RequestResponse(event) => self.handle_request_response(event).map(Some),
+            BehaviourEvent::RelayClient(relay::client::Event::ReservationReqAccepted {
+                relay_peer_id,
+                ..
+            }) => Ok(Some(NetworkEvent::RelayReservationAccepted(relay_peer_id))),
+            BehaviourEvent::RelayClient(relay::client::Event::OutboundCircuitEstablished {
+                relay_peer_id,
+                ..
+            }) => Ok(Some(NetworkEvent::RelayCircuitEstablished {
+                relay: Some(relay_peer_id),
+                remote: None,
+            })),
+            BehaviourEvent::RelayClient(relay::client::Event::InboundCircuitEstablished {
+                src_peer_id,
+                ..
+            }) => Ok(Some(NetworkEvent::RelayCircuitEstablished {
+                relay: None,
+                remote: Some(src_peer_id),
+            })),
+            BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. }) => {
+                if let Some(route) = self.pending_relay_reservations.remove(&peer_id) {
+                    self.swarm
+                        .listen_on(route)
+                        .map_err(|error| NetworkError::Listen(format!("{error:?}")))?;
+                }
+                if let Some((target, mut route)) = self.pending_relay_dials.remove(&peer_id) {
+                    route.push(libp2p::multiaddr::Protocol::P2p(target));
+                    self.swarm
+                        .dial(route)
+                        .map_err(|error| NetworkError::Dial(format!("{error:?}")))?;
+                }
+                Ok(Some(NetworkEvent::ObservedAddress {
+                    peer: peer_id,
+                    address: info.observed_addr,
+                }))
+            }
+            BehaviourEvent::Dcutr(event) => match event.result {
+                Ok(_) => Ok(Some(NetworkEvent::HolePunchSucceeded(event.remote_peer_id))),
+                Err(error) => Ok(Some(NetworkEvent::HolePunchFailed {
+                    peer: event.remote_peer_id,
+                    reason: error.to_string(),
+                })),
+            },
+            BehaviourEvent::Ping(_) | BehaviourEvent::Identify(_) => Ok(None),
+        }
+    }
+
+    fn handle_request_response(
         &mut self,
         event: request_response::Event<NetworkRequest, NetworkResponse>,
     ) -> Result<NetworkEvent, NetworkError> {
@@ -863,6 +1065,7 @@ impl NetworkNode {
         }
         self.swarm
             .behaviour_mut()
+            .request_response
             .send_response(channel, response)
             .map_err(|_| NetworkError::Request("response channel closed".into()))
     }
@@ -875,7 +1078,10 @@ impl NetworkNode {
         {
             return Err(NetworkError::Rejected(RejectionCode::FrameLimit));
         }
-        self.swarm.behaviour_mut().send_request(&peer, request);
+        self.swarm
+            .behaviour_mut()
+            .request_response
+            .send_request(&peer, request);
         Ok(())
     }
 
@@ -907,6 +1113,36 @@ impl NetworkNode {
         }
         Ok(())
     }
+}
+
+fn relay_peer_from_base(address: &Multiaddr) -> Option<PeerId> {
+    match address.iter().last() {
+        Some(libp2p::multiaddr::Protocol::P2p(peer)) => Some(peer),
+        _ => None,
+    }
+}
+
+fn relay_peer_from_route(address: &Multiaddr) -> Option<PeerId> {
+    let mut previous_peer = None;
+    for protocol in address.iter() {
+        match protocol {
+            libp2p::multiaddr::Protocol::P2p(peer) => previous_peer = Some(peer),
+            libp2p::multiaddr::Protocol::P2pCircuit => return previous_peer,
+            _ => {}
+        }
+    }
+    None
+}
+
+fn relay_base_from_route(address: &Multiaddr) -> Option<Multiaddr> {
+    let mut base = Multiaddr::empty();
+    for protocol in address.iter() {
+        if matches!(protocol, libp2p::multiaddr::Protocol::P2pCircuit) {
+            return relay_peer_from_base(&base).map(|_| base);
+        }
+        base.push(protocol);
+    }
+    None
 }
 
 fn normalize_messages(messages: Vec<SyncMessage>) -> Result<Vec<SyncMessage>, RejectionCode> {

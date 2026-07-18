@@ -26,7 +26,7 @@ use std::{
 };
 use thiserror::Error;
 
-const USAGE: &str = r#"ChatCommons M2c/M2d diagnostic node
+const USAGE: &str = r#"ChatCommons M2c-M2e diagnostic node
 
 Usage:
   chatcommons-node init --state <directory>
@@ -37,9 +37,11 @@ Usage:
   chatcommons-node join --state <directory> --invite-code <code>
   chatcommons-node run --state <directory> --community <hex>
     --listen <multiaddr> [--allow-user <user-id-hex> ...]
+    [--relay-address <relay-base-multiaddr>]
     [--dial-peer <peer-id> --dial-address <multiaddr>] [--exit-after-events <count>]
 
-This is a developer tool. It has no discovery, NAT traversal, relay, or GUI.
+This is a developer tool. Relay-assisted hole punching requires an explicit relay.
+It has no discovery, production relay configuration, or GUI.
 "#;
 const MAX_ALLOWED_USERS: usize = 256;
 
@@ -262,6 +264,7 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
     )?;
     let peer = envelope.peer_id();
     network.configure_bootstrap_target(peer, invitation)?;
+    network.listen(parse_multiaddr("/ip4/0.0.0.0/udp/0/quic-v1")?)?;
     network.dial(peer, envelope.address().clone())?;
     println!("COMMUNITY_ID={}", hex::encode(community.as_bytes()));
     println!("BOOTSTRAP_PEER={peer}");
@@ -270,7 +273,34 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
     let mut prepared = Some(prepared);
     loop {
         match network.next_event().await? {
-            NetworkEvent::Connected(peer) => println!("CONNECTED={peer}"),
+            NetworkEvent::Connected { peer, relayed } => {
+                println!(
+                    "CONNECTED={peer} via={}",
+                    if relayed { "relay" } else { "direct" }
+                )
+            }
+            NetworkEvent::RelayConnected(peer) => println!("RELAY_CONNECTED={peer}"),
+            NetworkEvent::RelayDisconnected(peer) => println!("RELAY_DISCONNECTED={peer}"),
+            NetworkEvent::RelayReservationAccepted(peer) => {
+                println!("RELAY_RESERVATION_ACCEPTED={peer}")
+            }
+            NetworkEvent::RelayCircuitEstablished { relay, remote } => {
+                println!("RELAY_CIRCUIT_ESTABLISHED relay={relay:?} remote={remote:?}")
+            }
+            NetworkEvent::RelayConnectionFailed { relay, reason } => {
+                return Err(CliError::Network(NetworkError::Request(format!(
+                    "relay {relay:?} failed: {reason}"
+                ))));
+            }
+            NetworkEvent::ObservedAddress { peer, address } => {
+                println!("OBSERVED_ADDRESS={address} observer={peer}")
+            }
+            NetworkEvent::HolePunchSucceeded(peer) => {
+                println!("HOLE_PUNCH_SUCCEEDED={peer}")
+            }
+            NetworkEvent::HolePunchFailed { peer, reason } => {
+                println!("HOLE_PUNCH_FAILED={peer} reason={reason}; RELAY_FALLBACK={peer}")
+            }
             NetworkEvent::Authenticated(peer) => println!("AUTHENTICATED={peer}"),
             NetworkEvent::SyncProgress(peer) => println!("SYNC_PROGRESS={peer}"),
             NetworkEvent::BootstrapChallenge {
@@ -355,6 +385,7 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
         "--state",
         "--community",
         "--listen",
+        "--relay-address",
         "--allow-user",
         "--dial-peer",
         "--dial-address",
@@ -363,6 +394,10 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
     let state = NodeState::load(options.require_one("--state")?)?;
     let community = parse_community(options.require_one("--community")?)?;
     let listen = parse_multiaddr(options.require_one("--listen")?)?;
+    let relay = options
+        .optional_one("--relay-address")?
+        .map(parse_multiaddr)
+        .transpose()?;
     let mut allowed_users = parse_allowed_users(options.many("--allow-user"))?;
     let dial = parse_dial(options)?;
     let exit_after_events = options
@@ -410,6 +445,10 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
     println!("PEER_ID={peer_id}");
     println!("COMMUNITY_ID={}", hex::encode(community.as_bytes()));
     network.listen(listen)?;
+    if let Some(relay) = relay {
+        let route = network.reserve_relay(relay)?;
+        println!("RELAY_ROUTE={route}");
+    }
     if let Some((peer, address)) = dial {
         network.dial(peer, address)?;
     }
@@ -423,7 +462,33 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
         );
         match event {
             NetworkEvent::Listening(address) => println!("LISTEN_ADDRESS={address}"),
-            NetworkEvent::Connected(peer) => println!("CONNECTED={peer}"),
+            NetworkEvent::Connected { peer, relayed } => {
+                println!(
+                    "CONNECTED={peer} via={}",
+                    if relayed { "relay" } else { "direct" }
+                )
+            }
+            NetworkEvent::RelayConnected(peer) => println!("RELAY_CONNECTED={peer}"),
+            NetworkEvent::RelayDisconnected(peer) => println!("RELAY_DISCONNECTED={peer}"),
+            NetworkEvent::RelayReservationAccepted(peer) => {
+                println!("RELAY_RESERVATION_ACCEPTED={peer}")
+            }
+            NetworkEvent::RelayCircuitEstablished { relay, remote } => {
+                println!("RELAY_CIRCUIT_ESTABLISHED relay={relay:?} remote={remote:?}")
+            }
+            NetworkEvent::RelayConnectionFailed { relay, reason } => {
+                println!("RELAY_CONNECTION_FAILED={relay:?} reason={reason}")
+            }
+            NetworkEvent::ObservedAddress { peer, address } => {
+                println!("OBSERVED_ADDRESS={address} observer={peer}")
+            }
+            NetworkEvent::HolePunchSucceeded(peer) => {
+                println!("HOLE_PUNCH_SUCCEEDED={peer}")
+            }
+            NetworkEvent::HolePunchFailed { peer, reason } => {
+                println!("HOLE_PUNCH_FAILED={peer} reason={reason}");
+                println!("RELAY_FALLBACK={peer}");
+            }
             NetworkEvent::Authenticated(peer) => println!("AUTHENTICATED={peer}"),
             NetworkEvent::SyncProgress(peer) => println!("SYNC_PROGRESS={peer}"),
             NetworkEvent::Disconnected(peer) => println!("DISCONNECTED={peer}"),
