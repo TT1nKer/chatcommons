@@ -15,6 +15,7 @@ The prototype demonstrates:
 - top-level room tabs with an on-demand room browser;
 - an on-demand member drawer;
 - simulated create, join, invite, search, customization and message flows;
+- a Chinese/English toggle that persists locally and can later move into Settings;
 - an authenticated click-to-annotate review overlay;
 - an independently authenticated owner inbox with replies and workflow states.
 

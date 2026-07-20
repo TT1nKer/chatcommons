@@ -3,30 +3,62 @@
 
   const $ = (selector, parent = document) => parent.querySelector(selector);
   const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
-  const state = { community: 'weekend', room: '闲聊' };
+  const i18n = window.kaiyuanI18n;
+  const l = (chinese, english) => i18n.pick(chinese, english);
+  const state = { community: 'weekend', room: 'general', screen: 'home' };
+  const rooms = {
+    general: { zh: '闲聊', en: 'General' },
+    games: { zh: '游戏', en: 'Games' },
+    gear: { zh: '装备讨论', en: 'Gear' },
+  };
   const communities = {
-    weekend: { name: '周末游戏组', symbol: '周', symbolClass: 'symbol-coral' },
-    opensource: { name: '开源小组', symbol: '开', symbolClass: 'symbol-blue' },
-    family: { name: '家里人', symbol: '家', symbolClass: 'symbol-green' },
+    weekend: { zh: '周末游戏组', en: 'Weekend Games', symbolZh: '周', symbolEn: 'W', symbolClass: 'symbol-coral' },
+    opensource: { zh: '开源小组', en: 'Open Source Group', symbolZh: '开', symbolEn: 'O', symbolClass: 'symbol-blue' },
+    family: { zh: '家里人', en: 'Family', symbolZh: '家', symbolEn: 'F', symbolClass: 'symbol-green' },
   };
 
+  function roomName() {
+    const room = rooms[state.room] || rooms.general;
+    return l(room.zh, room.en);
+  }
+
+  function communityName() {
+    const community = communities[state.community];
+    return l(community.zh, community.en);
+  }
+
+  function refreshLocalizedState() {
+    const community = communities[state.community];
+    $('#community-title').textContent = communityName();
+    const symbol = $('#community-symbol');
+    symbol.textContent = l(community.symbolZh, community.symbolEn);
+    symbol.className = 'community-symbol ' + community.symbolClass;
+    $('#room-title').textContent = roomName();
+    $('#message-input').placeholder = l(
+      '在' + roomName() + '中说点什么……',
+      'Message #' + roomName().toLowerCase() + '…'
+    );
+    document.title = state.screen === 'home'
+      ? l('kaiyuan · 现在', 'kaiyuan · Now')
+      : communityName() + ' · ' + roomName();
+    document.documentElement.dataset.reviewScreen = state.screen === 'home'
+      ? 'home'
+      : 'community:' + state.community + ':room:' + state.room;
+    window.dispatchEvent(new Event('chatcommons:screen-change'));
+  }
+
   function showScreen(name) {
+    state.screen = name === 'community' ? 'community' : 'home';
     const home = $('#home-screen');
     const community = $('#community-screen');
-    home.hidden = name !== 'home';
-    community.hidden = name !== 'community';
-    document.title = name === 'home' ? 'kaiyuan · 现在' : `${communities[state.community].name} · ${state.room}`;
+    home.hidden = state.screen !== 'home';
+    community.hidden = state.screen !== 'community';
+    refreshLocalizedState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    window.dispatchEvent(new Event('chatcommons:screen-change'));
   }
 
   function openCommunity(id) {
     state.community = communities[id] ? id : 'weekend';
-    const community = communities[state.community];
-    $('#community-title').textContent = community.name;
-    const symbol = $('#community-symbol');
-    symbol.textContent = community.symbol;
-    symbol.className = `community-symbol ${community.symbolClass}`;
     showScreen('community');
   }
 
@@ -36,12 +68,9 @@
       tab.classList.toggle('is-active', active);
       tab.setAttribute('aria-selected', String(active));
     });
-    state.room = button.dataset.room;
-    $('#room-title').textContent = state.room;
-    $('#message-input').placeholder = `在${state.room}中说点什么……`;
-    document.title = `${communities[state.community].name} · ${state.room}`;
-    window.dispatchEvent(new Event('chatcommons:screen-change'));
-    toast(`已切换到 ${state.room}`);
+    state.room = rooms[button.dataset.room] ? button.dataset.room : 'general';
+    refreshLocalizedState();
+    toast(l('已切换到 ' + roomName(), 'Switched to ' + roomName()));
   }
 
   function toast(message) {
@@ -69,6 +98,7 @@
         <button class="primary-action" type="submit">${submitText}</button>
       </div>
     </form>`;
+    i18n.translateSubtree(layer);
     layer.hidden = false;
     $('[data-dialog-close]', layer).onclick = closeDialog;
     layer.onclick = (event) => { if (event.target === layer) closeDialog(); };
@@ -89,7 +119,7 @@
       label: '社区名称',
       placeholder: '例如：周五电影夜',
       submitText: '创建并进入',
-      action: (value) => toast(`“${value}”已创建（原型演示）`),
+      action: (value) => toast(l('“' + value + '”已创建（原型演示）', '“' + value + '” created (prototype)')),
     });
   }
 
@@ -100,7 +130,7 @@
       label: '邀请链接',
       placeholder: 'kaiyuan://invite/…',
       submitText: '查看社区',
-      action: () => toast('邀请有效，正在准备加入（原型演示）'),
+      action: () => toast(l('邀请有效，正在准备加入（原型演示）', 'Invite accepted. Preparing to join (prototype)')),
     });
   }
 
@@ -108,7 +138,7 @@
     const invite = 'kaiyuan://invite/preview-single-use-example';
     try {
       await navigator.clipboard.writeText(invite);
-      toast('单人邀请已复制，使用一次后失效');
+      toast(l('单人邀请已复制，使用一次后失效', 'Single-person invite copied. It expires after use.'));
     } catch (_) {
       openDialog({
         title: '邀请已经准备好',
@@ -116,7 +146,7 @@
         label: '单人邀请',
         placeholder: invite,
         submitText: '完成',
-        action: () => toast('已关闭邀请'),
+        action: () => toast(l('已关闭邀请', 'Invite closed')),
       });
       const input = $('#dialog-layer input');
       input.value = invite;
@@ -131,7 +161,7 @@
       label: '搜索',
       placeholder: '输入“闲聊”“邀请”或社区名称',
       submitText: '打开',
-      action: (value) => toast(`正在查找“${value}”（原型演示）`),
+      action: (value) => toast(l('正在查找“' + value + '”（原型演示）', 'Searching for “' + value + '” (prototype)')),
     });
   }
 
@@ -144,6 +174,7 @@
       <div class="setting-group"><h3>信息密度</h3><div class="setting-options"><button type="button" data-density-choice="comfortable" class="is-active">舒适</button><button type="button" data-density-choice="compact">紧凑</button></div></div>
       <div class="setting-group"><h3>原型说明</h3><p>社区卡片、顶部房间和按需成员抽屉是本轮重点。请通过右下角“标注意见”直接点选不自然的地方。</p></div>
     </section>`;
+    i18n.translateSubtree(panel);
     panel.hidden = false;
     $('[data-panel-close]', panel).onclick = () => { panel.hidden = true; };
     panel.onclick = (event) => { if (event.target === panel) panel.hidden = true; };
@@ -175,14 +206,15 @@
     article.className = 'message message-self';
     const avatar = document.createElement('span');
     avatar.className = 'message-avatar self';
-    avatar.textContent = '林';
+    avatar.textContent = l('林', 'L');
     const body = document.createElement('div');
     const header = document.createElement('header');
     const author = document.createElement('strong');
-    author.textContent = '你';
+    author.textContent = l('你', 'You');
     const time = document.createElement('time');
-    time.textContent = '刚刚';
+    time.textContent = l('刚刚', 'Just now');
     const content = document.createElement('p');
+    content.dataset.noI18n = 'true';
     content.textContent = text;
     header.append(author, time);
     body.append(header, content);
@@ -190,7 +222,7 @@
     $('#message-list').appendChild(article);
     input.value = '';
     article.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    toast('消息已保存在本机（原型演示）');
+    toast(l('消息已保存在本机（原型演示）', 'Message saved on this device (prototype)'));
   }
 
   document.addEventListener('click', (event) => {
@@ -207,13 +239,14 @@
       invite: copyInvite,
       search: openSearch,
       customize: openPanel,
+      'toggle-language': () => i18n.toggle(),
       members: () => toggleMembers(true),
       'close-members': () => toggleMembers(false),
-      rooms: () => toast('房间较多时，这里会打开搜索面板'),
-      profile: () => toast('个人资料：林间（原型演示）'),
-      'all-communities': () => toast('当前共有 3 个社区'),
-      'room-info': () => toast(`${state.room}：社区里的持久文字房间`),
-      'future-feature': () => toast('文件、语音和投屏尚未进入本轮原型'),
+      rooms: () => toast(l('房间较多时，这里会打开搜索面板', 'When there are more rooms, this opens a search panel')),
+      profile: () => toast(l('个人资料：林间（原型演示）', 'Profile: Linjian (prototype)')),
+      'all-communities': () => toast(l('当前共有 3 个社区', 'You currently have 3 communities')),
+      'room-info': () => toast(roomName() + l('：社区里的持久文字房间', ': a persistent text room in this community')),
+      'future-feature': () => toast(l('文件、语音和投屏尚未进入本轮原型', 'Files, voice, and screen sharing are not in this prototype yet')),
     };
     actions[action]?.();
   });
@@ -236,4 +269,6 @@
       toggleMembers(false);
     }
   });
+  window.addEventListener('kaiyuan:locale-change', refreshLocalizedState);
+  refreshLocalizedState();
 }());

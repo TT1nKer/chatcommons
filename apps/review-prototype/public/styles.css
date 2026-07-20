@@ -68,10 +68,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .brand small { margin-left: 4px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .brand-logo { width: 38px; height: 38px; flex: 0 0 38px; border: 1px solid rgba(255,255,255,.06); border-radius: 11px; background: #020712 url("./assets/kaiyuan-brand-sheet.jpg") no-repeat 6.95% 91.84% / 667% 667%; box-shadow: 0 8px 20px rgba(14,94,118,.16); }
 .top-actions { display: flex; align-items: center; gap: 9px; }
-.search-button, .quiet-button { height: 38px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 650; }
+.search-button, .quiet-button, .language-toggle { height: 38px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 650; }
 .search-button { min-width: 245px; padding: 0 15px; text-align: left; }
 .search-button span { margin-right: 12px; color: var(--faint); }
 .quiet-button { padding: 0 14px; }
+.language-toggle { min-width: 48px; padding: 0 11px; color: var(--ink); font-weight: 780; letter-spacing: .02em; }
 .avatar-button { width: 38px; height: 38px; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 800; }
 .workspace { width: min(1220px, calc(100% - 50px)); margin: 0 auto; padding: 55px 0 80px; }
 .screen[hidden] { display: none !important; }
@@ -93,7 +94,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .community-card { position: relative; min-height: 185px; display: grid; grid-template-columns: 50px minmax(0,1fr); gap: 17px; padding: 24px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-align: left; box-shadow: 0 1px 0 rgba(255,255,255,.04); transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
 .community-card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); box-shadow: var(--shadow); }
 .community-card.card-featured { grid-row: span 2; min-height: 392px; align-content: end; background: linear-gradient(155deg, var(--accent-soft), var(--surface) 64%); }
-.community-card.card-featured::before { content: "今晚"; position: absolute; top: 26px; left: 27px; color: color-mix(in srgb, var(--accent) 65%, var(--ink)); font-size: 82px; font-weight: 850; line-height: 1; letter-spacing: -.09em; opacity: .14; }
+.community-card.card-featured::before { content: var(--featured-label, "今晚"); position: absolute; top: 26px; left: 27px; color: color-mix(in srgb, var(--accent) 65%, var(--ink)); font-size: 82px; font-weight: 850; line-height: 1; letter-spacing: -.09em; opacity: .14; }
 .community-card.card-muted { opacity: .82; }
 .community-symbol { flex: 0 0 auto; width: 50px; height: 50px; display: grid; place-items: center; border-radius: 17px; color: #19151a; font-size: 15px; font-weight: 850; }
 .symbol-coral { background: #ff8a70; }.symbol-blue { background: #8ab2ed; }.symbol-green { background: #91cbaa; }

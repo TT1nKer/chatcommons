@@ -13,9 +13,23 @@
 
   const $ = (selector, parent = document) => parent.querySelector(selector);
   const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
+  const l = (chinese, english) => window.kaiyuanI18n.pick(chinese, english);
   const state = { selecting: false, highlighted: null, reviews: [] };
-  const statusText = { pending: '待确认', in_progress: '处理中', client_review: '待验收', completed: '已完成', rejected: '暂不处理' };
-  const categoryText = { layout: '布局', copy: '文案', feature: '交互', product: '产品逻辑' };
+  const statuses = {
+    pending: ['待确认', 'Pending'],
+    in_progress: ['处理中', 'In progress'],
+    client_review: ['待验收', 'Ready for review'],
+    completed: ['已完成', 'Completed'],
+    rejected: ['暂不处理', 'Not planned'],
+  };
+  const categories = {
+    layout: ['布局', 'Layout'],
+    copy: ['文案', 'Copy'],
+    feature: ['交互', 'Interaction'],
+    product: ['产品逻辑', 'Product logic'],
+  };
+  const statusText = (status) => statuses[status] ? l(...statuses[status]) : status;
+  const categoryText = (category) => categories[category] ? l(...categories[category]) : category;
 
   async function api(path, options = {}) {
     const response = await fetch(`./api${path}`, {
@@ -24,13 +38,17 @@
       headers: { 'Content-Type': 'application/json', 'X-Review-Token': token, ...(options.headers || {}) },
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || '评审服务暂时不可用');
+    if (!response.ok) {
+      const message = window.kaiyuanI18n.locale === 'en'
+        ? 'The review service could not complete this request.'
+        : (body.error || '评审服务暂时不可用');
+      throw new Error(message);
+    }
     return body;
   }
 
   function currentScreen() {
-    const visible = $('[data-screen]:not([hidden])');
-    return `${visible?.dataset.screen || 'unknown'} · ${document.title}`.slice(0, 180);
+    return document.documentElement.dataset.reviewScreen || 'home';
   }
 
   function selectorFor(element) {
@@ -64,7 +82,7 @@
   function setSelecting(value) {
     state.selecting = value;
     document.body.classList.toggle('review-selecting', value);
-    $('[data-review-select]').textContent = value ? '取消标注' : '标注意见';
+    $('[data-review-select]').textContent = value ? l('取消标注', 'Cancel annotation') : l('标注意见', 'Annotate');
     if (!value) clearHighlight();
   }
 
@@ -88,7 +106,7 @@
     list.replaceChildren();
     if (!state.reviews.length) {
       const empty = document.createElement('small');
-      empty.textContent = '还没有提交意见。';
+      empty.textContent = l('还没有提交意见。', 'No feedback yet.');
       list.appendChild(empty);
       return;
     }
@@ -96,13 +114,13 @@
       const row = document.createElement('div');
       row.className = 'review-item';
       const title = document.createElement('strong');
-      title.textContent = `${categoryText[item.category] || item.category} · ${item.message}`;
+      title.textContent = categoryText(item.category) + ' · ' + item.message;
       const context = document.createElement('small');
-      context.textContent = `${item.targetText || item.screen} · ${statusText[item.status] || item.status}`;
+      context.textContent = (item.targetText || item.screen) + ' · ' + statusText(item.status);
       row.append(title, context);
       if (item.adminReply) {
         const reply = document.createElement('small');
-        reply.textContent = `回复：${item.adminReply}`;
+        reply.textContent = l('回复：', 'Reply: ') + item.adminReply;
         row.appendChild(reply);
       }
       list.appendChild(row);
@@ -112,7 +130,10 @@
   function renderMarkers() {
     $$('[data-review-marker]').forEach((node) => node.remove());
     const screen = currentScreen();
-    state.reviews.filter((item) => item.screen === screen).forEach((item, index) => {
+    const legacyScreen = screen === 'home' ? 'home' : 'community';
+    state.reviews.filter((item) => (
+      item.screen === screen || item.screen.startsWith(legacyScreen + ' ·')
+    )).forEach((item, index) => {
       const marker = document.createElement('button');
       marker.type = 'button';
       marker.className = 'review-marker';
@@ -122,7 +143,7 @@
       marker.style.left = `${item.x * 100}vw`;
       marker.style.top = `${item.y * 100}vh`;
       marker.textContent = String(index + 1);
-      marker.title = `${item.message} · ${statusText[item.status] || item.status}`;
+      marker.title = item.message + ' · ' + statusText(item.status);
       marker.onclick = () => {
         $('#review-list').hidden = false;
         renderList();
@@ -158,7 +179,8 @@
       <label>具体意见<textarea name="message" required minlength="2" maxlength="1000" placeholder="直接说你的感觉，例如：我不知道这里点了会发生什么"></textarea></label>
       <div class="review-form-actions"><button class="secondary" type="button" data-review-cancel>取消</button><button type="submit">提交</button></div>
     </form>`;
-    $('[data-selected-context]', modal).textContent = `你选择了：${visibleText(element) || '页面上的这个位置'}`;
+    window.kaiyuanI18n.translateSubtree(modal);
+    $('[data-selected-context]', modal).textContent = l('你选择了：', 'You selected: ') + (visibleText(element) || l('页面上的这个位置', 'this part of the page'));
     document.body.appendChild(modal);
     const form = $('.review-form', modal);
     $('[data-review-cancel]', modal).onclick = () => modal.remove();
@@ -193,7 +215,7 @@
         await api('/reviews', { method: 'POST', body: JSON.stringify(payload) });
         modal.remove();
         await loadReviews();
-        notify('意见已提交');
+        notify(l('意见已提交', 'Feedback submitted'));
       } catch (error) {
         notify(error.message);
         submit.disabled = false;
@@ -206,6 +228,7 @@
   toolbar.className = 'review-toolbar';
   toolbar.dataset.reviewUi = 'true';
   toolbar.innerHTML = `<strong>原型评审</strong><small>正常操作页面；需要评论时再点“标注意见”。</small><div class="review-toolbar-actions"><button type="button" data-review-select>标注意见</button><button type="button" class="secondary" data-review-list>已有意见</button></div><div class="review-list" id="review-list" hidden></div>`;
+  window.kaiyuanI18n.translateSubtree(toolbar);
   document.body.appendChild(toolbar);
   $('[data-review-select]').onclick = () => setSelecting(!state.selecting);
   $('[data-review-list]').onclick = () => { const list = $('#review-list'); list.hidden = !list.hidden; if (!list.hidden) renderList(); };
@@ -226,6 +249,11 @@
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && state.selecting) setSelecting(false); });
   window.addEventListener('resize', renderMarkers);
   window.addEventListener('chatcommons:screen-change', renderMarkers);
+  window.addEventListener('kaiyuan:locale-change', () => {
+    setSelecting(state.selecting);
+    renderList();
+    renderMarkers();
+  });
   new MutationObserver(renderMarkers).observe($('#app-shell'), { subtree: true, attributes: true, attributeFilter: ['hidden'] });
   loadReviews();
 }());

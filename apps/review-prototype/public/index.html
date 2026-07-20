@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./review.css" />
     <script defer src="./vendor/html2canvas.min.js"></script>
+    <script defer src="./i18n.js"></script>
     <script defer src="./app.js"></script>
     <script defer src="./review.js"></script>
   </head>
@@ -23,6 +24,7 @@
         <nav class="top-actions" aria-label="全局操作">
           <button class="search-button" type="button" data-action="search"><span>⌘ K</span> 找社区、房间或操作</button>
           <button class="quiet-button" type="button" data-action="customize" aria-label="调整界面">调整界面</button>
+          <button class="language-toggle" id="language-toggle" type="button" data-action="toggle-language" aria-label="Switch to English">EN</button>
           <button class="avatar-button" type="button" data-action="profile" aria-label="打开个人资料">林</button>
         </nav>
       </header>
@@ -99,9 +101,9 @@
           </header>
 
           <div class="room-strip" role="tablist" aria-label="房间">
-            <button class="room-tab is-active" type="button" role="tab" aria-selected="true" data-room="闲聊">闲聊 <span>3</span></button>
-            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="游戏">游戏</button>
-            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="装备讨论">装备讨论</button>
+            <button class="room-tab is-active" type="button" role="tab" aria-selected="true" data-room="general">闲聊 <span>3</span></button>
+            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="games">游戏</button>
+            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="gear">装备讨论</button>
             <button class="room-browser" type="button" data-action="rooms">所有房间 <span>⌄</span></button>
           </div>
 
