@@ -30,6 +30,21 @@ user in all of them:
 Each service needs its own data inventory, retention period, abuse controls,
 operator identity and shutdown/migration behavior before deployment.
 
+## Initial operated footprint
+
+The project website may operate bounded, low-bandwidth services that make the
+client easier to obtain and connect: static downloads and documentation,
+invitation landing pages, optional bootstrap/discovery responses, update metadata
+and explicitly submitted product feedback. These services remain replaceable and
+must not become the source of truth for identity, membership or community history.
+
+The initial project-operated footprint does not carry video, screen sharing,
+live media, bulk attachment transfer or a general public Circuit Relay. Those
+services have materially different bandwidth, abuse and legal costs and require
+their own engineering gate and deployment decision. “Lightweight” means bounded
+control-plane requests with explicit retention and rate limits; it does not waive
+the service review requirements above.
+
 ## Report bundle requirements
 
 A future report bundle should be a separate, explicit user action and contain only:
