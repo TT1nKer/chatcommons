@@ -233,6 +233,7 @@
   window.chatcommonsI18n = {
     get locale() { return locale; },
     pick,
+    canonicalText: sourceValue,
     setLocale,
     toggle() { setLocale(locale === 'en' ? 'zh-CN' : 'en'); },
     translateSubtree,

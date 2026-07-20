@@ -43,6 +43,17 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         self.assertIn("method: 'DELETE'", review)
         self.assertIn("rememberEditToken(created.publicId, created.editToken)", review)
 
+    def test_review_markers_follow_document_and_nested_scroll(self):
+        review = (PUBLIC / "review.js").read_text()
+        styles = (PUBLIC / "review.css").read_text()
+        self.assertIn("scrollX: Math.max(0, window.scrollX)", review)
+        self.assertIn("scrollY: Math.max(0, window.scrollY)", review)
+        self.assertIn("document.addEventListener('scroll', scheduleMarkerPositions, true)", review)
+        self.assertIn("new ResizeObserver(scheduleMarkerPositions)", review)
+        self.assertIn("targetFor(item)", review)
+        self.assertIn("position: absolute", styles)
+        self.assertNotIn("position: fixed; z-index: 990", styles)
+
 
 if __name__ == "__main__":
     unittest.main()

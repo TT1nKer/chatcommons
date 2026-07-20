@@ -21,7 +21,14 @@
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
     } catch (_) { return {}; }
   }
-  const state = { selecting: false, highlighted: null, reviews: [], editTokens: loadEditTokens() };
+  const state = {
+    selecting: false,
+    highlighted: null,
+    reviews: [],
+    markerItems: new Map(),
+    markerFrame: 0,
+    editTokens: loadEditTokens(),
+  };
   const statuses = {
     pending: ['待确认', 'Pending'],
     in_progress: ['处理中', 'In progress'],
@@ -100,6 +107,55 @@
 
   function visibleText(element) {
     return (element.innerText || element.getAttribute('aria-label') || element.tagName || '').trim().replace(/\s+/g, ' ').slice(0, 240);
+  }
+
+  function canonicalText(value) {
+    const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+    return window.chatcommonsI18n.canonicalText?.(normalized) || normalized;
+  }
+
+  function targetFor(item) {
+    const expected = canonicalText(item.targetText);
+    const root = $('#app-shell');
+    if (!expected || !root) return null;
+    const candidates = [root, ...root.querySelectorAll('*')].filter((element) => {
+      if (element.closest('[data-review-ui]') || element.getClientRects().length === 0) return false;
+      return canonicalText(visibleText(element)) === expected;
+    });
+    if (!candidates.length) return null;
+    return candidates.reduce((best, element) => {
+      const rect = element.getBoundingClientRect();
+      const bestRect = best.getBoundingClientRect();
+      return rect.width * rect.height < bestRect.width * bestRect.height ? element : best;
+    });
+  }
+
+  function positionMarker(marker, item) {
+    const target = targetFor(item);
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      marker.style.left = `${window.scrollX + rect.left + rect.width / 2}px`;
+      marker.style.top = `${window.scrollY + rect.top + rect.height / 2}px`;
+      marker.dataset.anchor = 'element';
+      return;
+    }
+    const captureX = Number(item.scrollX || 0) + Number(item.x || 0) * Number(item.viewportWidth || innerWidth);
+    const captureY = Number(item.scrollY || 0) + Number(item.y || 0) * Number(item.viewportHeight || innerHeight);
+    marker.style.left = `${captureX}px`;
+    marker.style.top = `${captureY}px`;
+    marker.dataset.anchor = 'capture';
+  }
+
+  function refreshMarkerPositions() {
+    state.markerFrame = 0;
+    $$('[data-review-marker]').forEach((marker) => {
+      const item = state.markerItems.get(marker.dataset.reviewMarker);
+      if (item) positionMarker(marker, item);
+    });
+  }
+
+  function scheduleMarkerPositions() {
+    if (!state.markerFrame) state.markerFrame = requestAnimationFrame(refreshMarkerPositions);
   }
 
   function clearHighlight() {
@@ -181,6 +237,7 @@
 
   function renderMarkers() {
     $$('[data-review-marker]').forEach((node) => node.remove());
+    state.markerItems.clear();
     const screen = currentScreen();
     const legacyScreen = screen === 'home' ? 'home' : 'community';
     state.reviews.filter((item) => (
@@ -192,8 +249,6 @@
       marker.dataset.reviewUi = 'true';
       marker.dataset.reviewMarker = item.publicId;
       marker.dataset.status = item.status;
-      marker.style.left = `${item.x * 100}vw`;
-      marker.style.top = `${item.y * 100}vh`;
       marker.textContent = String(index + 1);
       marker.title = item.message + ' · ' + statusText(item.status);
       marker.onclick = () => {
@@ -201,6 +256,8 @@
         renderList();
       };
       document.body.appendChild(marker);
+      state.markerItems.set(item.publicId, item);
+      positionMarker(marker, item);
     });
   }
 
@@ -334,6 +391,7 @@
           targetId: selectorFor(element), targetText: visibleText(element),
           x: Math.min(1, Math.max(0, (rect.left + rect.width / 2) / innerWidth)),
           y: Math.min(1, Math.max(0, (rect.top + rect.height / 2) / innerHeight)),
+          scrollX: Math.max(0, window.scrollX), scrollY: Math.max(0, window.scrollY),
           viewportWidth: innerWidth, viewportHeight: innerHeight,
           category: form.elements.category.value, priority: form.elements.priority.value,
           message: form.elements.message.value.trim(), screenshot,
@@ -376,6 +434,7 @@
   }, true);
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && state.selecting) setSelecting(false); });
   window.addEventListener('resize', renderMarkers);
+  document.addEventListener('scroll', scheduleMarkerPositions, true);
   window.addEventListener('chatcommons:screen-change', renderMarkers);
   window.addEventListener('chatcommons:locale-change', () => {
     setSelecting(state.selecting);
@@ -383,5 +442,6 @@
     renderMarkers();
   });
   new MutationObserver(renderMarkers).observe($('#app-shell'), { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+  if (window.ResizeObserver) new ResizeObserver(scheduleMarkerPositions).observe($('#app-shell'));
   loadReviews();
 }());

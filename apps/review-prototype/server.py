@@ -123,6 +123,8 @@ class ReviewApplication:
                     target_text TEXT NOT NULL,
                     x REAL NOT NULL,
                     y REAL NOT NULL,
+                    scroll_x REAL NOT NULL DEFAULT 0,
+                    scroll_y REAL NOT NULL DEFAULT 0,
                     viewport_width INTEGER NOT NULL,
                     viewport_height INTEGER NOT NULL,
                     category TEXT NOT NULL,
@@ -141,6 +143,10 @@ class ReviewApplication:
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(reviews)")}
             if "edit_token_hash" not in columns:
                 connection.execute("ALTER TABLE reviews ADD COLUMN edit_token_hash TEXT NOT NULL DEFAULT ''")
+            if "scroll_x" not in columns:
+                connection.execute("ALTER TABLE reviews ADD COLUMN scroll_x REAL NOT NULL DEFAULT 0")
+            if "scroll_y" not in columns:
+                connection.execute("ALTER TABLE reviews ADD COLUMN scroll_y REAL NOT NULL DEFAULT 0")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS audit_log (
@@ -204,7 +210,7 @@ class ReviewApplication:
             raise ValueError("请求内容无效")
         allowed = {
             "surface", "screen", "targetId", "targetText", "x", "y", "viewportWidth",
-            "viewportHeight", "category", "priority", "message", "screenshot",
+            "viewportHeight", "scrollX", "scrollY", "category", "priority", "message", "screenshot",
         }
         if set(payload) - allowed:
             raise ValueError("请求包含未知字段")
@@ -217,6 +223,8 @@ class ReviewApplication:
         priority = payload.get("priority")
         try:
             x, y = float(payload.get("x")), float(payload.get("y"))
+            scroll_x = float(payload.get("scrollX", 0))
+            scroll_y = float(payload.get("scrollY", 0))
             width, height = int(payload.get("viewportWidth")), int(payload.get("viewportHeight"))
         except (TypeError, ValueError) as error:
             raise ValueError("标注位置无效") from error
@@ -224,7 +232,14 @@ class ReviewApplication:
             raise ValueError("请完整填写意见")
         if category not in CATEGORIES or priority not in PRIORITIES:
             raise ValueError("意见类型或优先级无效")
-        if not (0 <= x <= 1 and 0 <= y <= 1 and 280 <= width <= 10_000 and 300 <= height <= 10_000):
+        if not (
+            0 <= x <= 1
+            and 0 <= y <= 1
+            and 0 <= scroll_x <= 10_000_000
+            and 0 <= scroll_y <= 10_000_000
+            and 280 <= width <= 10_000
+            and 300 <= height <= 10_000
+        ):
             raise ValueError("标注位置或窗口尺寸无效")
         screenshot_file = self.save_screenshot(payload.get("screenshot"))
         now = utc_now()
@@ -235,13 +250,13 @@ class ReviewApplication:
                 cursor = connection.execute(
                     """
                     INSERT INTO reviews (
-                        public_id,surface,screen,target_id,target_text,x,y,viewport_width,
+                        public_id,surface,screen,target_id,target_text,x,y,scroll_x,scroll_y,viewport_width,
                         viewport_height,category,priority,message,screenshot_file,created_ip,
                         user_agent,created_at,updated_at,edit_token_hash
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
-                        public_id, surface, screen, target_id, target_text, x, y, width, height,
+                        public_id, surface, screen, target_id, target_text, x, y, scroll_x, scroll_y, width, height,
                         category, priority, message, screenshot_file, client_ip,
                         self.clean_text(user_agent, 300), now, now, self.edit_token_hash(edit_token),
                     ),
@@ -265,6 +280,7 @@ class ReviewApplication:
             item = {
                 "publicId": row["public_id"], "surface": row["surface"], "screen": row["screen"],
                 "targetText": row["target_text"], "x": row["x"], "y": row["y"],
+                "scrollX": row["scroll_x"], "scrollY": row["scroll_y"],
                 "viewportWidth": row["viewport_width"], "viewportHeight": row["viewport_height"],
                 "category": row["category"], "priority": row["priority"], "message": row["message"],
                 "status": row["status"], "adminReply": row["admin_reply"],

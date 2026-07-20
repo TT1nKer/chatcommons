@@ -78,6 +78,8 @@ class ReviewServerTest(unittest.TestCase):
             "targetText": "<b>不执行</b>",
             "x": 0.4,
             "y": 0.6,
+            "scrollX": 12,
+            "scrollY": 640,
             "viewportWidth": 1440,
             "viewportHeight": 900,
             "category": "layout",
@@ -123,6 +125,8 @@ class ReviewServerTest(unittest.TestCase):
         self.assertNotIn("id", reviewer_item)
         self.assertNotIn("targetId", reviewer_item)
         self.assertIn("DROP TABLE", reviewer_item["message"])
+        self.assertEqual(reviewer_item["scrollX"], 12)
+        self.assertEqual(reviewer_item["scrollY"], 640)
         status, _, body = self.request("GET", "/api/admin/reviews", token=OWNER_TOKEN, owner=True)
         self.assertEqual(status, 200)
         admin_item = json.loads(body)["reviews"][0]
