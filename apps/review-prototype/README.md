@@ -34,12 +34,19 @@ python3 apps/review-prototype/server.py
 
 Open the reviewer URL once with `?review=<REVIEW_TOKEN>` and the owner inbox
 with `/admin.html?owner=<OWNER_TOKEN>`. Each token is captured in session storage
-and removed from the visible URL. Do not publish either credential.
+and removed from the visible URL. Reviewers can use “复制审阅链接” to reconstruct
+the authorized entry URL before sharing it with another invited reviewer. Do
+not publish either credential.
 
 ## Security and operations
 
 - The public prototype has no review controls without a valid reviewer token.
 - Reviewer and owner credentials are independent and compared in constant time.
+- Each submitted item receives a separate edit capability. Only its SHA-256
+  digest is stored server-side; the capability stays in the submitting browser.
+- A reviewer can edit their own item while it is pending and can withdraw it
+  before it reaches a terminal owner state. Withdrawal is an audited soft state,
+  not physical database deletion.
 - Rotating `REVIEW_TOKEN` revokes all previous reviewer links after restart.
 - SQLite and screenshots live outside the static directory.
 - Screenshots are optional, validated by MIME prefix and magic bytes, capped at

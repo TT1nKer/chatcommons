@@ -25,6 +25,16 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         self.assertIn("dataset.reviewScreen", review)
         self.assertIn("return document.documentElement.dataset.reviewScreen", review)
 
+    def test_reviewer_can_reshare_and_manage_only_owned_feedback(self):
+        review = (PUBLIC / "review.js").read_text()
+        self.assertIn("data-review-share", review)
+        self.assertIn("link.searchParams.set('review', token)", review)
+        self.assertIn("chatcommons-review-edit-tokens-v1", review)
+        self.assertIn("'X-Edit-Token': editToken", review)
+        self.assertIn("method: 'PATCH'", review)
+        self.assertIn("method: 'DELETE'", review)
+        self.assertIn("rememberEditToken(created.publicId, created.editToken)", review)
+
 
 if __name__ == "__main__":
     unittest.main()

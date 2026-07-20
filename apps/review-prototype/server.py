@@ -11,6 +11,7 @@ import ipaddress
 import json
 import mimetypes
 import os
+import re
 import secrets
 import signal
 import sqlite3
@@ -29,7 +30,8 @@ MAX_SCREENSHOT_ENCODED = 1_500_000
 MAX_SCREENSHOT_BYTES = 1_000_000
 CATEGORIES = {"layout", "copy", "feature", "product"}
 PRIORITIES = {"low", "normal", "high"}
-STATUSES = {"pending", "in_progress", "client_review", "completed", "rejected"}
+STATUSES = {"pending", "in_progress", "client_review", "completed", "rejected", "withdrawn"}
+PUBLIC_ID_PATTERN = re.compile(r"RV-[A-Za-z0-9_-]{12,32}")
 
 
 def utc_now() -> str:
@@ -136,6 +138,9 @@ class ReviewApplication:
                 )
                 """
             )
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(reviews)")}
+            if "edit_token_hash" not in columns:
+                connection.execute("ALTER TABLE reviews ADD COLUMN edit_token_hash TEXT NOT NULL DEFAULT ''")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS audit_log (
@@ -153,6 +158,16 @@ class ReviewApplication:
         if not isinstance(value, str):
             return ""
         return " ".join(value.strip().split())[:maximum]
+
+    @staticmethod
+    def edit_token_hash(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def valid_edit_token(cls, supplied: str, expected_hash: str) -> bool:
+        if not (40 <= len(supplied) <= 200) or len(expected_hash) != 64:
+            return False
+        return hmac.compare_digest(cls.edit_token_hash(supplied), expected_hash)
 
     def save_screenshot(self, value: object) -> str:
         if value in (None, ""):
@@ -214,6 +229,7 @@ class ReviewApplication:
         screenshot_file = self.save_screenshot(payload.get("screenshot"))
         now = utc_now()
         public_id = f"RV-{secrets.token_urlsafe(12)}"
+        edit_token = secrets.token_urlsafe(32)
         try:
             with self.database() as connection:
                 cursor = connection.execute(
@@ -221,25 +237,29 @@ class ReviewApplication:
                     INSERT INTO reviews (
                         public_id,surface,screen,target_id,target_text,x,y,viewport_width,
                         viewport_height,category,priority,message,screenshot_file,created_ip,
-                        user_agent,created_at,updated_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        user_agent,created_at,updated_at,edit_token_hash
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         public_id, surface, screen, target_id, target_text, x, y, width, height,
                         category, priority, message, screenshot_file, client_ip,
-                        self.clean_text(user_agent, 300), now, now,
+                        self.clean_text(user_agent, 300), now, now, self.edit_token_hash(edit_token),
                     ),
                 )
-                review_id = cursor.lastrowid
+                if cursor.lastrowid is None:
+                    raise RuntimeError("意见编号生成失败")
         except Exception:
             if screenshot_file:
                 (self.config.screenshots / screenshot_file).unlink(missing_ok=True)
             raise
-        return {"id": review_id, "publicId": public_id, "status": "pending", "createdAt": now}
+        return {"publicId": public_id, "editToken": edit_token, "status": "pending", "createdAt": now}
 
     def list_reviews(self, owner: bool) -> list[dict[str, object]]:
         with self.database() as connection:
-            rows = connection.execute("SELECT * FROM reviews ORDER BY id DESC LIMIT 300").fetchall()
+            query = "SELECT * FROM reviews ORDER BY id DESC LIMIT 300" if owner else (
+                "SELECT * FROM reviews WHERE status <> 'withdrawn' ORDER BY id DESC LIMIT 300"
+            )
+            rows = connection.execute(query).fetchall()
         items = []
         for row in rows:
             item = {
@@ -254,6 +274,66 @@ class ReviewApplication:
                 item.update({"id": row["id"], "targetId": row["target_id"], "hasScreenshot": bool(row["screenshot_file"])})
             items.append(item)
         return items
+
+    def edit_review(self, public_id: str, payload: object, edit_token: str) -> str:
+        if not isinstance(payload, dict) or set(payload) - {"category", "priority", "message"}:
+            raise ValueError("请求内容无效")
+        category = payload.get("category")
+        priority = payload.get("priority")
+        message = self.clean_text(payload.get("message"), 1000)
+        if category not in CATEGORIES or priority not in PRIORITIES or len(message) < 2:
+            raise ValueError("请完整填写意见")
+        now = utc_now()
+        with self.database() as connection:
+            row = connection.execute(
+                "SELECT id,status,edit_token_hash FROM reviews WHERE public_id=?", (public_id,)
+            ).fetchone()
+            if row is None:
+                return "not_found"
+            if not self.valid_edit_token(edit_token, row["edit_token_hash"]):
+                return "forbidden"
+            if row["status"] != "pending":
+                return "conflict"
+            connection.execute(
+                "UPDATE reviews SET category=?,priority=?,message=?,updated_at=? WHERE id=?",
+                (category, priority, message, now, row["id"]),
+            )
+            connection.execute(
+                "INSERT INTO audit_log(review_id,action,detail,created_at) VALUES(?,?,?,?)",
+                (
+                    row["id"],
+                    "review.reviewer_edit",
+                    json.dumps({"category": category, "priority": priority, "message": message}, ensure_ascii=False),
+                    now,
+                ),
+            )
+        return "ok"
+
+    def withdraw_review(self, public_id: str, edit_token: str) -> str:
+        now = utc_now()
+        with self.database() as connection:
+            row = connection.execute(
+                "SELECT id,status,edit_token_hash FROM reviews WHERE public_id=?", (public_id,)
+            ).fetchone()
+            if row is None:
+                return "not_found"
+            if not self.valid_edit_token(edit_token, row["edit_token_hash"]):
+                return "forbidden"
+            if row["status"] in {"completed", "rejected", "withdrawn"}:
+                return "conflict"
+            connection.execute(
+                "UPDATE reviews SET status='withdrawn',updated_at=? WHERE id=?", (now, row["id"])
+            )
+            connection.execute(
+                "INSERT INTO audit_log(review_id,action,detail,created_at) VALUES(?,?,?,?)",
+                (
+                    row["id"],
+                    "review.withdraw",
+                    json.dumps({"previousStatus": row["status"]}, ensure_ascii=False),
+                    now,
+                ),
+            )
+        return "ok"
 
     def update_review(self, review_id: int, payload: object) -> bool:
         if not isinstance(payload, dict) or set(payload) - {"status", "adminReply"}:
@@ -425,6 +505,29 @@ def make_handler(application: ReviewApplication):
 
         def do_PATCH(self) -> None:  # noqa: N802
             path = urlsplit(self.path).path.rstrip("/")
+            reviewer_prefix = "/api/reviews/"
+            if path.startswith(reviewer_prefix):
+                public_id = path[len(reviewer_prefix) :]
+                if PUBLIC_ID_PATTERN.fullmatch(public_id) is None:
+                    self.error_response(HTTPStatus.NOT_FOUND, "意见不存在")
+                    return
+                if not self.require_authorized() or not self.require_origin():
+                    return
+                if application.limiter.limited(f"mutate:{self.client_ip()}", 60, 3600):
+                    self.error_response(HTTPStatus.TOO_MANY_REQUESTS, "操作过于频繁，请稍后再试")
+                    return
+                try:
+                    result = application.edit_review(
+                        public_id, self.read_json(), self.headers.get("X-Edit-Token", "").strip()
+                    )
+                except ValueError as error:
+                    self.error_response(HTTPStatus.BAD_REQUEST, str(error))
+                    return
+                except Exception:
+                    self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "意见修改失败")
+                    return
+                self.reviewer_mutation_response(result, "意见已进入处理流程，不能再编辑")
+                return
             prefix = "/api/admin/reviews/"
             if not path.startswith(prefix) or not path[len(prefix) :].isdigit():
                 self.error_response(HTTPStatus.NOT_FOUND, "接口不存在")
@@ -443,6 +546,36 @@ def make_handler(application: ReviewApplication):
                 self.error_response(HTTPStatus.NOT_FOUND, "意见不存在")
                 return
             self.json_response(HTTPStatus.OK, {"ok": True})
+
+        def reviewer_mutation_response(self, result: str, conflict_message: str) -> None:
+            if result == "ok":
+                self.json_response(HTTPStatus.OK, {"ok": True})
+            elif result == "conflict":
+                self.error_response(HTTPStatus.CONFLICT, conflict_message)
+            elif result == "forbidden":
+                self.error_response(HTTPStatus.FORBIDDEN, "只能修改自己提交的意见")
+            else:
+                self.error_response(HTTPStatus.NOT_FOUND, "意见不存在")
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            path = urlsplit(self.path).path.rstrip("/")
+            prefix = "/api/reviews/"
+            if not path.startswith(prefix) or PUBLIC_ID_PATTERN.fullmatch(path[len(prefix) :]) is None:
+                self.error_response(HTTPStatus.NOT_FOUND, "接口不存在")
+                return
+            if not self.require_authorized() or not self.require_origin():
+                return
+            if application.limiter.limited(f"mutate:{self.client_ip()}", 60, 3600):
+                self.error_response(HTTPStatus.TOO_MANY_REQUESTS, "操作过于频繁，请稍后再试")
+                return
+            try:
+                result = application.withdraw_review(
+                    path[len(prefix) :], self.headers.get("X-Edit-Token", "").strip()
+                )
+            except Exception:
+                self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "意见撤回失败")
+                return
+            self.reviewer_mutation_response(result, "意见已经结束，不能撤回")
 
     return Handler
 

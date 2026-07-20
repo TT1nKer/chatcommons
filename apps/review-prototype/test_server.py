@@ -48,13 +48,15 @@ class ReviewServerTest(unittest.TestCase):
         cls.thread.join(timeout=2)
         cls.temporary.cleanup()
 
-    def request(self, method: str, path: str, payload=None, token=None, owner=False, origin=ORIGIN):
+    def request(self, method: str, path: str, payload=None, token=None, owner=False, origin=ORIGIN, edit_token=None):
         body = None if payload is None else json.dumps(payload).encode()
         headers = {}
         if payload is not None:
             headers["Content-Type"] = "application/json"
         if token:
             headers["X-Owner-Token" if owner else "X-Review-Token"] = token
+        if edit_token:
+            headers["X-Edit-Token"] = edit_token
         if origin:
             headers["Origin"] = origin
         request = urllib.request.Request(self.base + path, data=body, headers=headers, method=method)
@@ -114,6 +116,8 @@ class ReviewServerTest(unittest.TestCase):
         status, _, body = self.request("POST", "/api/reviews", self.valid_payload(), REVIEW_TOKEN)
         self.assertEqual(status, 201, body)
         created = json.loads(body)
+        self.assertNotIn("id", created)
+        self.assertGreaterEqual(len(created["editToken"]), 40)
         status, _, body = self.request("GET", "/api/reviews", token=REVIEW_TOKEN)
         reviewer_item = json.loads(body)["reviews"][0]
         self.assertNotIn("id", reviewer_item)
@@ -122,10 +126,10 @@ class ReviewServerTest(unittest.TestCase):
         status, _, body = self.request("GET", "/api/admin/reviews", token=OWNER_TOKEN, owner=True)
         self.assertEqual(status, 200)
         admin_item = json.loads(body)["reviews"][0]
-        self.assertEqual(admin_item["id"], created["id"])
+        self.assertEqual(admin_item["publicId"], created["publicId"])
         status, _, _ = self.request(
             "PATCH",
-            f"/api/admin/reviews/{created['id']}",
+            f"/api/admin/reviews/{admin_item['id']}",
             {"status": "client_review", "adminReply": "已修改，请验收 <script>"},
             OWNER_TOKEN,
             owner=True,
@@ -157,13 +161,83 @@ class ReviewServerTest(unittest.TestCase):
         screenshot = "data:image/png;base64," + base64.b64encode(png).decode()
         status, _, body = self.request("POST", "/api/reviews", self.valid_payload(screenshot), REVIEW_TOKEN)
         self.assertEqual(status, 201)
-        review_id = json.loads(body)["id"]
+        public_id = json.loads(body)["publicId"]
+        status, _, body = self.request("GET", "/api/admin/reviews", token=OWNER_TOKEN, owner=True)
+        review_id = next(item["id"] for item in json.loads(body)["reviews"] if item["publicId"] == public_id)
         status, _, _ = self.request("GET", f"/api/admin/reviews/{review_id}/image")
         self.assertEqual(status, 401)
         status, headers, body = self.request("GET", f"/api/admin/reviews/{review_id}/image", token=OWNER_TOKEN, owner=True)
         self.assertEqual(status, 200)
         self.assertEqual(headers.get_content_type(), "image/png")
         self.assertEqual(body, png)
+
+    def test_reviewer_can_edit_and_withdraw_only_their_own_pending_review(self):
+        payload = self.valid_payload()
+        payload["message"] = "初始意见"
+        status, _, body = self.request("POST", "/api/reviews", payload, REVIEW_TOKEN)
+        self.assertEqual(status, 201, body)
+        created = json.loads(body)
+        path = f"/api/reviews/{created['publicId']}"
+
+        edited = {"category": "feature", "priority": "high", "message": "更新后的意见 <script>"}
+        status, _, _ = self.request(
+            "PATCH", path, edited, REVIEW_TOKEN, edit_token="wrong-" + "x" * 48
+        )
+        self.assertEqual(status, 403)
+        status, _, _ = self.request(
+            "PATCH", path, edited, REVIEW_TOKEN, edit_token=created["editToken"]
+        )
+        self.assertEqual(status, 200)
+
+        status, _, body = self.request("GET", "/api/reviews", token=REVIEW_TOKEN)
+        item = next(review for review in json.loads(body)["reviews"] if review["publicId"] == created["publicId"])
+        self.assertEqual(item["category"], "feature")
+        self.assertEqual(item["priority"], "high")
+        self.assertIn("<script>", item["message"])
+
+        status, _, _ = self.request(
+            "DELETE", path, token=REVIEW_TOKEN, edit_token=created["editToken"]
+        )
+        self.assertEqual(status, 200)
+        status, _, body = self.request("GET", "/api/reviews", token=REVIEW_TOKEN)
+        self.assertNotIn(created["publicId"], {item["publicId"] for item in json.loads(body)["reviews"]})
+        status, _, body = self.request("GET", "/api/admin/reviews", token=OWNER_TOKEN, owner=True)
+        withdrawn = next(item for item in json.loads(body)["reviews"] if item["publicId"] == created["publicId"])
+        self.assertEqual(withdrawn["status"], "withdrawn")
+
+        with self.application.database() as connection:
+            actions = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT action FROM audit_log WHERE review_id=?", (withdrawn["id"],)
+                )
+            }
+        self.assertEqual(actions, {"review.reviewer_edit", "review.withdraw"})
+
+    def test_reviewer_cannot_edit_after_owner_starts_processing(self):
+        payload = self.valid_payload()
+        payload["message"] = "等待管理员处理"
+        status, _, body = self.request("POST", "/api/reviews", payload, REVIEW_TOKEN)
+        self.assertEqual(status, 201, body)
+        created = json.loads(body)
+        status, _, body = self.request("GET", "/api/admin/reviews", token=OWNER_TOKEN, owner=True)
+        admin_item = next(item for item in json.loads(body)["reviews"] if item["publicId"] == created["publicId"])
+        status, _, _ = self.request(
+            "PATCH",
+            f"/api/admin/reviews/{admin_item['id']}",
+            {"status": "in_progress", "adminReply": "正在处理"},
+            OWNER_TOKEN,
+            owner=True,
+        )
+        self.assertEqual(status, 200)
+        status, _, _ = self.request(
+            "PATCH",
+            f"/api/reviews/{created['publicId']}",
+            {"category": "copy", "priority": "normal", "message": "不应保存"},
+            REVIEW_TOKEN,
+            edit_token=created["editToken"],
+        )
+        self.assertEqual(status, 409)
 
 
 if __name__ == "__main__":
