@@ -38,10 +38,19 @@
               <p>不用整理服务器。先看看朋友们正在聊什么。</p>
             </div>
             <div class="primary-actions">
-              <button class="secondary-action" type="button" data-action="join">通过邀请加入</button>
-              <button class="primary-action" type="button" data-action="create">创建社区</button>
+              <button class="primary-action" type="button" data-action="join">通过邀请加入</button>
+              <button class="secondary-action" type="button" data-action="create">创建社区</button>
             </div>
           </div>
+
+          <section class="pulse-section" aria-labelledby="pulse-title">
+            <div class="section-title"><div><p>动态</p><h2 id="pulse-title">值得回来的几件事</h2></div></div>
+            <div class="pulse-list">
+              <button type="button" data-community="opensource"><span class="pulse-icon">↗</span><span><strong>小陈提到了你</strong><small>开源小组 · 产品讨论</small></span><time>12 分钟</time></button>
+              <button type="button" data-community="weekend"><span class="pulse-icon">3</span><span><strong>周末游戏组有新消息</strong><small>从你上次离开的位置继续</small></span><time>刚刚</time></button>
+              <button type="button" data-action="invite"><span class="pulse-icon">＋</span><span><strong>邀请一个朋友</strong><small>每个链接只供一个人使用</small></span><time>创建邀请</time></button>
+            </div>
+          </section>
 
           <section class="continue-section" aria-labelledby="continue-title">
             <div class="section-title">
@@ -76,15 +85,6 @@
                 </span>
                 <span class="presence-stack" aria-label="1 人在线"><i class="person green">妈</i></span>
               </button>
-            </div>
-          </section>
-
-          <section class="pulse-section" aria-labelledby="pulse-title">
-            <div class="section-title"><div><p>动态</p><h2 id="pulse-title">值得回来的几件事</h2></div></div>
-            <div class="pulse-list">
-              <button type="button" data-community="opensource"><span class="pulse-icon">↗</span><span><strong>小陈提到了你</strong><small>开源小组 · 产品讨论</small></span><time>12 分钟</time></button>
-              <button type="button" data-community="weekend"><span class="pulse-icon">3</span><span><strong>周末游戏组有新消息</strong><small>从你上次离开的位置继续</small></span><time>刚刚</time></button>
-              <button type="button" data-action="invite"><span class="pulse-icon">＋</span><span><strong>邀请一个朋友</strong><small>每个链接只供一个人使用</small></span><time>创建邀请</time></button>
             </div>
           </section>
         </section>

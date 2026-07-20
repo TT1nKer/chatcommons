@@ -8,6 +8,14 @@ PUBLIC = Path(__file__).parent / "public"
 
 
 class FrontendLocalizationContractTest(unittest.TestCase):
+    def test_home_prioritizes_joining_and_surfaces_activity_before_recents(self):
+        html = (PUBLIC / "index.html").read_text()
+        join = '<button class="primary-action" type="button" data-action="join">'
+        create = '<button class="secondary-action" type="button" data-action="create">'
+        self.assertIn(join, html)
+        self.assertIn(create, html)
+        self.assertLess(html.index('class="pulse-section"'), html.index('class="continue-section"'))
+
     def test_language_runtime_loads_before_interactions(self):
         html = (PUBLIC / "index.html").read_text()
         self.assertLess(html.index('src="./i18n.js"'), html.index('src="./app.js"'))
