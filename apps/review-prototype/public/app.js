@@ -15,7 +15,7 @@
     const community = $('#community-screen');
     home.hidden = name !== 'home';
     community.hidden = name !== 'community';
-    document.title = name === 'home' ? 'ChatCommons · 现在' : `${communities[state.community].name} · ${state.room}`;
+    document.title = name === 'home' ? 'kaiyuan · 现在' : `${communities[state.community].name} · ${state.room}`;
     window.scrollTo({ top: 0, behavior: 'smooth' });
     window.dispatchEvent(new Event('chatcommons:screen-change'));
   }
@@ -98,14 +98,14 @@
       title: '通过邀请加入',
       description: '粘贴朋友发来的邀请。客户端会自动寻找社区，不需要输入地址或端口。',
       label: '邀请链接',
-      placeholder: 'chatcommons://invite/…',
+      placeholder: 'kaiyuan://invite/…',
       submitText: '查看社区',
       action: () => toast('邀请有效，正在准备加入（原型演示）'),
     });
   }
 
   async function copyInvite() {
-    const invite = 'chatcommons://invite/preview-single-use-example';
+    const invite = 'kaiyuan://invite/preview-single-use-example';
     try {
       await navigator.clipboard.writeText(invite);
       toast('单人邀请已复制，使用一次后失效');

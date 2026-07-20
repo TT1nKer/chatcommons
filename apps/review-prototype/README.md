@@ -1,8 +1,12 @@
-# ChatCommons UI review prototype
+# kaiyuan UI review prototype
 
 This is an intentionally isolated browser prototype for validating product
-navigation before the Tauri desktop client exists. It is not a ChatCommons node
+navigation before the Tauri desktop client exists. It is not a kaiyuan node
 and does not read protocol identities or community databases.
+
+`kaiyuan` is the current user-facing product name. Existing repository, Rust
+crate and deployment identifiers intentionally remain unchanged until a separate
+protocol naming decision records compatibility and migration consequences.
 
 The prototype demonstrates:
 
