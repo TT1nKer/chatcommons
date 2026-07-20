@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="ChatCommons 功能导向桌面体验原型" />
+    <meta name="theme-color" content="#17161b" />
+    <title>ChatCommons · 交互原型</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./review.css" />
+    <script defer src="./vendor/html2canvas.min.js"></script>
+    <script defer src="./app.js"></script>
+    <script defer src="./review.js"></script>
+  </head>
+  <body>
+    <div class="app-shell" id="app-shell">
+      <header class="topbar">
+        <button class="brand" type="button" data-action="home" aria-label="回到现在">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>ChatCommons</span>
+          <small>交互原型</small>
+        </button>
+        <nav class="top-actions" aria-label="全局操作">
+          <button class="search-button" type="button" data-action="search"><span>⌘ K</span> 找社区、房间或操作</button>
+          <button class="quiet-button" type="button" data-action="customize" aria-label="调整界面">调整界面</button>
+          <button class="avatar-button" type="button" data-action="profile" aria-label="打开个人资料">林</button>
+        </nav>
+      </header>
+
+      <main class="workspace">
+        <section class="screen screen-home is-active" id="home-screen" data-screen="home" aria-labelledby="home-title">
+          <div class="home-heading">
+            <div>
+              <p class="kicker">星期一 · 7 月 20 日</p>
+              <h1 id="home-title">现在</h1>
+              <p>不用整理服务器。先看看朋友们正在聊什么。</p>
+            </div>
+            <div class="primary-actions">
+              <button class="secondary-action" type="button" data-action="join">通过邀请加入</button>
+              <button class="primary-action" type="button" data-action="create">创建社区</button>
+            </div>
+          </div>
+
+          <section class="continue-section" aria-labelledby="continue-title">
+            <div class="section-title">
+              <div><p>继续</p><h2 id="continue-title">回到最近的对话</h2></div>
+              <button class="text-button" type="button" data-action="all-communities">全部社区 <span>3</span></button>
+            </div>
+            <div class="community-grid" id="community-grid">
+              <button class="community-card card-featured" type="button" data-community="weekend">
+                <span class="community-symbol symbol-coral">周</span>
+                <span class="community-copy">
+                  <small>周末游戏组 · 闲聊</small>
+                  <strong>今晚八点还是九点？</strong>
+                  <span><b>阿岚</b> 刚刚 · 3 条新消息</span>
+                </span>
+                <span class="presence-stack" aria-label="3 人在线"><i class="person coral">岚</i><i class="person blue">陈</i><i class="person green">木</i></span>
+              </button>
+              <button class="community-card" type="button" data-community="opensource">
+                <span class="community-symbol symbol-blue">开</span>
+                <span class="community-copy">
+                  <small>开源小组 · 产品讨论</small>
+                  <strong>首页不应该是一排服务器图标</strong>
+                  <span><b>小陈</b> 12 分钟前 · 1 条新消息</span>
+                </span>
+                <span class="presence-stack" aria-label="2 人在线"><i class="person violet">陈</i><i class="person yellow">宇</i></span>
+              </button>
+              <button class="community-card card-muted" type="button" data-community="family">
+                <span class="community-symbol symbol-green">家</span>
+                <span class="community-copy">
+                  <small>家里人 · 日常</small>
+                  <strong>照片我晚点发到群里</strong>
+                  <span><b>妈妈</b> 昨天 · 没有未读</span>
+                </span>
+                <span class="presence-stack" aria-label="1 人在线"><i class="person green">妈</i></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="pulse-section" aria-labelledby="pulse-title">
+            <div class="section-title"><div><p>动态</p><h2 id="pulse-title">值得回来的几件事</h2></div></div>
+            <div class="pulse-list">
+              <button type="button" data-community="opensource"><span class="pulse-icon">↗</span><span><strong>小陈提到了你</strong><small>开源小组 · 产品讨论</small></span><time>12 分钟</time></button>
+              <button type="button" data-community="weekend"><span class="pulse-icon">3</span><span><strong>周末游戏组有新消息</strong><small>从你上次离开的位置继续</small></span><time>刚刚</time></button>
+              <button type="button" data-action="invite"><span class="pulse-icon">＋</span><span><strong>邀请一个朋友</strong><small>每个链接只供一个人使用</small></span><time>创建邀请</time></button>
+            </div>
+          </section>
+        </section>
+
+        <section class="screen screen-community" id="community-screen" data-screen="community" aria-labelledby="community-title" hidden>
+          <header class="community-header">
+            <button class="back-button" type="button" data-action="home" aria-label="回到现在">←</button>
+            <span class="community-symbol symbol-coral" id="community-symbol">周</span>
+            <div class="community-title-wrap"><p>社区</p><h1 id="community-title">周末游戏组</h1></div>
+            <div class="community-people">
+              <button class="presence-stack large" type="button" data-action="members" aria-label="查看在线成员"><i class="person coral">岚</i><i class="person blue">陈</i><i class="person green">木</i><span>3 人在线</span></button>
+              <button class="secondary-action compact" type="button" data-action="invite">邀请朋友</button>
+            </div>
+          </header>
+
+          <div class="room-strip" role="tablist" aria-label="房间">
+            <button class="room-tab is-active" type="button" role="tab" aria-selected="true" data-room="闲聊">闲聊 <span>3</span></button>
+            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="游戏">游戏</button>
+            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="装备讨论">装备讨论</button>
+            <button class="room-browser" type="button" data-action="rooms">所有房间 <span>⌄</span></button>
+          </div>
+
+          <div class="conversation-layout">
+            <section class="conversation" aria-label="消息">
+              <div class="conversation-heading"><div><p>今天</p><h2 id="room-title">闲聊</h2></div><button class="icon-button" type="button" data-action="room-info" aria-label="房间信息">···</button></div>
+              <div class="message-list" id="message-list" aria-live="polite">
+                <article class="message"><span class="message-avatar coral">岚</span><div><header><strong>阿岚</strong><time>19:42</time></header><p>今晚八点还是九点？我想先把新地图开一下。</p></div></article>
+                <article class="message"><span class="message-avatar blue">陈</span><div><header><strong>小陈</strong><time>19:44</time></header><p>八点半吧，我回家以后正好能赶上。</p><div class="message-reaction">👍 <span>2</span></div></div></article>
+                <article class="message message-self"><span class="message-avatar self">林</span><div><header><strong>你</strong><time>19:45</time></header><p>可以，我先开着房间等你们。</p></div></article>
+                <div class="new-divider"><span>3 条新消息</span></div>
+                <article class="message"><span class="message-avatar green">木</span><div><header><strong>木木</strong><time>刚刚</time></header><p>我也来。今晚可以顺便试一下新的聊天原型。</p></div></article>
+              </div>
+              <form class="composer" id="composer">
+                <button type="button" class="composer-add" data-action="future-feature" aria-label="更多操作">＋</button>
+                <label><span class="sr-only">发送消息到当前房间</span><textarea id="message-input" rows="1" maxlength="1000" placeholder="在闲聊中说点什么……"></textarea></label>
+                <span class="composer-hint">Enter 发送 · Shift Enter 换行</span>
+                <button type="submit" class="send-button">发送</button>
+              </form>
+            </section>
+
+            <aside class="member-drawer" id="member-drawer" aria-labelledby="members-title" hidden>
+              <div class="drawer-heading"><div><p>成员</p><h2 id="members-title">现在在线</h2></div><button class="icon-button" type="button" data-action="close-members" aria-label="关闭成员列表">×</button></div>
+              <div class="member-list">
+                <button type="button"><i class="person coral">岚</i><span><strong>阿岚</strong><small>正在浏览闲聊</small></span><b class="online-dot"></b></button>
+                <button type="button"><i class="person blue">陈</i><span><strong>小陈</strong><small>12 分钟前发言</small></span><b class="online-dot"></b></button>
+                <button type="button"><i class="person green">木</i><span><strong>木木</strong><small>刚刚发言</small></span><b class="online-dot"></b></button>
+              </div>
+              <p class="drawer-note">成员身份由自己的密钥证明。网络细节只在诊断页面出现。</p>
+            </aside>
+          </div>
+        </section>
+      </main>
+
+      <div class="connection-pill" id="connection-pill"><span></span><strong>已连接</strong><small>消息已同步</small></div>
+    </div>
+
+    <div class="dialog-layer" id="dialog-layer" hidden></div>
+    <div class="side-panel" id="side-panel" hidden></div>
+    <div class="toast" id="app-toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

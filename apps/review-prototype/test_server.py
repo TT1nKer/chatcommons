@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+import base64
+import json
+import os
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+
+from server import Config, ReviewApplication, make_handler
+
+
+REVIEW_TOKEN = "review-" + "a" * 48
+OWNER_TOKEN = "owner-" + "b" * 48
+ORIGIN = "https://review.example.test"
+
+
+class ReviewServerTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.temporary = tempfile.TemporaryDirectory()
+        root = Path(cls.temporary.name)
+        os.environ.update(
+            {
+                "REVIEW_DB_PATH": str(root / "reviews.sqlite3"),
+                "REVIEW_SCREENSHOT_DIR": str(root / "screenshots"),
+                "REVIEW_TOKEN": REVIEW_TOKEN,
+                "OWNER_TOKEN": OWNER_TOKEN,
+                "REVIEW_ALLOWED_ORIGIN": ORIGIN,
+            }
+        )
+        config = Config()
+        config.validate()
+        cls.application = ReviewApplication(config)
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(cls.application))
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base = f"http://127.0.0.1:{cls.server.server_port}"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+        cls.temporary.cleanup()
+
+    def request(self, method: str, path: str, payload=None, token=None, owner=False, origin=ORIGIN):
+        body = None if payload is None else json.dumps(payload).encode()
+        headers = {}
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+        if token:
+            headers["X-Owner-Token" if owner else "X-Review-Token"] = token
+        if origin:
+            headers["Origin"] = origin
+        request = urllib.request.Request(self.base + path, data=body, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                return response.status, response.headers, response.read()
+        except urllib.error.HTTPError as error:
+            try:
+                return error.code, error.headers, error.read()
+            finally:
+                error.close()
+
+    @staticmethod
+    def valid_payload(screenshot=""):
+        return {
+            "surface": "prototype",
+            "screen": "home · ChatCommons",
+            "targetId": "button.card[data-x='<script>']",
+            "targetText": "<b>不执行</b>",
+            "x": 0.4,
+            "y": 0.6,
+            "viewportWidth": 1440,
+            "viewportHeight": 900,
+            "category": "layout",
+            "priority": "normal",
+            "message": "'); DROP TABLE reviews; -- <script>alert(1)</script>",
+            "screenshot": screenshot,
+        }
+
+    def test_config_rejects_non_origin_urls(self):
+        original = os.environ["REVIEW_ALLOWED_ORIGIN"]
+        try:
+            for invalid in (
+                "ftp://review.example.test",
+                "https://user@review.example.test",
+                "https://review.example.test/path",
+                "https://review.example.test?query=yes",
+                "https://review.example.test#fragment",
+            ):
+                os.environ["REVIEW_ALLOWED_ORIGIN"] = invalid
+                with self.subTest(origin=invalid), self.assertRaises(RuntimeError):
+                    Config().validate()
+        finally:
+            os.environ["REVIEW_ALLOWED_ORIGIN"] = original
+
+    def test_missing_wrong_and_valid_reviewer_credentials(self):
+        status, _, _ = self.request("GET", "/api/reviews")
+        self.assertEqual(status, 401)
+        status, _, _ = self.request("GET", "/api/reviews", token="wrong-" + "x" * 48)
+        self.assertEqual(status, 401)
+        status, _, _ = self.request("GET", "/api/reviews", token=REVIEW_TOKEN)
+        self.assertEqual(status, 200)
+        status, _, _ = self.request("GET", "/api/admin/reviews", token=REVIEW_TOKEN, owner=True)
+        self.assertEqual(status, 401)
+
+    def test_create_list_update_and_audit_inert_text(self):
+        status, _, body = self.request("POST", "/api/reviews", self.valid_payload(), REVIEW_TOKEN)
+        self.assertEqual(status, 201, body)
+        created = json.loads(body)
+        status, _, body = self.request("GET", "/api/reviews", token=REVIEW_TOKEN)
+        reviewer_item = json.loads(body)["reviews"][0]
+        self.assertNotIn("id", reviewer_item)
+        self.assertNotIn("targetId", reviewer_item)
+        self.assertIn("DROP TABLE", reviewer_item["message"])
+        status, _, body = self.request("GET", "/api/admin/reviews", token=OWNER_TOKEN, owner=True)
+        self.assertEqual(status, 200)
+        admin_item = json.loads(body)["reviews"][0]
+        self.assertEqual(admin_item["id"], created["id"])
+        status, _, _ = self.request(
+            "PATCH",
+            f"/api/admin/reviews/{created['id']}",
+            {"status": "client_review", "adminReply": "已修改，请验收 <script>"},
+            OWNER_TOKEN,
+            owner=True,
+        )
+        self.assertEqual(status, 200)
+        status, _, body = self.request("GET", "/api/reviews", token=REVIEW_TOKEN)
+        updated = json.loads(body)["reviews"][0]
+        self.assertEqual(updated["status"], "client_review")
+        self.assertIn("<script>", updated["adminReply"])
+        with self.application.database() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0], 1)
+
+    def test_origin_unknown_status_and_fake_image_are_rejected(self):
+        status, _, _ = self.request("POST", "/api/reviews", self.valid_payload(), REVIEW_TOKEN, origin="https://evil.example")
+        self.assertEqual(status, 403)
+        fake = "data:image/png;base64," + base64.b64encode(b"not really a png").decode()
+        status, _, _ = self.request("POST", "/api/reviews", self.valid_payload(fake), REVIEW_TOKEN)
+        self.assertEqual(status, 400)
+        oversized = "data:image/png;base64," + "A" * 1_500_001
+        status, _, _ = self.request("POST", "/api/reviews", self.valid_payload(oversized), REVIEW_TOKEN)
+        self.assertEqual(status, 400)
+        status, _, body = self.request("GET", "/api/admin/reviews", token=OWNER_TOKEN, owner=True)
+        review_id = json.loads(body)["reviews"][0]["id"]
+        status, _, _ = self.request("PATCH", f"/api/admin/reviews/{review_id}", {"status": "unknown", "adminReply": ""}, OWNER_TOKEN, owner=True)
+        self.assertEqual(status, 400)
+
+    def test_private_real_screenshot(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"test-payload"
+        screenshot = "data:image/png;base64," + base64.b64encode(png).decode()
+        status, _, body = self.request("POST", "/api/reviews", self.valid_payload(screenshot), REVIEW_TOKEN)
+        self.assertEqual(status, 201)
+        review_id = json.loads(body)["id"]
+        status, _, _ = self.request("GET", f"/api/admin/reviews/{review_id}/image")
+        self.assertEqual(status, 401)
+        status, headers, body = self.request("GET", f"/api/admin/reviews/{review_id}/image", token=OWNER_TOKEN, owner=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get_content_type(), "image/png")
+        self.assertEqual(body, png)
+
+
+if __name__ == "__main__":
+    unittest.main()
