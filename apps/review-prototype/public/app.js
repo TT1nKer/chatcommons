@@ -3,7 +3,7 @@
 
   const $ = (selector, parent = document) => parent.querySelector(selector);
   const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
-  const i18n = window.kaiyuanI18n;
+  const i18n = window.chatcommonsI18n;
   const l = (chinese, english) => i18n.pick(chinese, english);
   const state = { community: 'weekend', room: 'general', screen: 'home' };
   const rooms = {
@@ -39,7 +39,7 @@
       'Message #' + roomName().toLowerCase() + '…'
     );
     document.title = state.screen === 'home'
-      ? l('kaiyuan · 现在', 'kaiyuan · Now')
+      ? l('ChatCommons · 现在', 'ChatCommons · Now')
       : communityName() + ' · ' + roomName();
     document.documentElement.dataset.reviewScreen = state.screen === 'home'
       ? 'home'
@@ -128,14 +128,14 @@
       title: '通过邀请加入',
       description: '粘贴朋友发来的邀请。客户端会自动寻找社区，不需要输入地址或端口。',
       label: '邀请链接',
-      placeholder: 'kaiyuan://invite/…',
+      placeholder: 'chatcommons://invite/…',
       submitText: '查看社区',
       action: () => toast(l('邀请有效，正在准备加入（原型演示）', 'Invite accepted. Preparing to join (prototype)')),
     });
   }
 
   async function copyInvite() {
-    const invite = 'kaiyuan://invite/preview-single-use-example';
+    const invite = 'chatcommons://invite/preview-single-use-example';
     try {
       await navigator.clipboard.writeText(invite);
       toast(l('单人邀请已复制，使用一次后失效', 'Single-person invite copied. It expires after use.'));
@@ -269,6 +269,6 @@
       toggleMembers(false);
     }
   });
-  window.addEventListener('kaiyuan:locale-change', refreshLocalizedState);
+  window.addEventListener('chatcommons:locale-change', refreshLocalizedState);
   refreshLocalizedState();
 }());

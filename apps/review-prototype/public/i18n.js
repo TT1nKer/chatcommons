@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const STORAGE_KEY = 'kaiyuan-locale';
+  const STORAGE_KEY = 'chatcommons-locale';
   const englishText = {
     '交互原型': 'Interactive prototype',
     '找社区、房间或操作': 'Find communities, rooms, or actions',
@@ -220,13 +220,13 @@
     document.documentElement.lang = locale;
     document.documentElement.style.setProperty('--featured-label', locale === 'en' ? '"Tonight"' : '"今晚"');
     const description = document.querySelector('meta[name="description"]');
-    if (description) description.content = pick('kaiyuan 功能导向桌面体验原型', 'kaiyuan function-first desktop experience prototype');
+    if (description) description.content = pick('ChatCommons 功能导向桌面体验原型', 'ChatCommons function-first desktop experience prototype');
     translateSubtree(document);
     updateLanguageControl();
-    window.dispatchEvent(new CustomEvent('kaiyuan:locale-change', { detail: { locale } }));
+    window.dispatchEvent(new CustomEvent('chatcommons:locale-change', { detail: { locale } }));
   }
 
-  window.kaiyuanI18n = {
+  window.chatcommonsI18n = {
     get locale() { return locale; },
     pick,
     setLocale,

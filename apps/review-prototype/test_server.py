@@ -71,7 +71,7 @@ class ReviewServerTest(unittest.TestCase):
     def valid_payload(screenshot=""):
         return {
             "surface": "prototype",
-            "screen": "home · kaiyuan",
+            "screen": "home · ChatCommons",
             "targetId": "button.card[data-x='<script>']",
             "targetText": "<b>不执行</b>",
             "x": 0.4,

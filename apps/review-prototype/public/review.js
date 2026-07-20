@@ -13,7 +13,7 @@
 
   const $ = (selector, parent = document) => parent.querySelector(selector);
   const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
-  const l = (chinese, english) => window.kaiyuanI18n.pick(chinese, english);
+  const l = (chinese, english) => window.chatcommonsI18n.pick(chinese, english);
   const state = { selecting: false, highlighted: null, reviews: [] };
   const statuses = {
     pending: ['待确认', 'Pending'],
@@ -39,7 +39,7 @@
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const message = window.kaiyuanI18n.locale === 'en'
+      const message = window.chatcommonsI18n.locale === 'en'
         ? 'The review service could not complete this request.'
         : (body.error || '评审服务暂时不可用');
       throw new Error(message);
@@ -179,7 +179,7 @@
       <label>具体意见<textarea name="message" required minlength="2" maxlength="1000" placeholder="直接说你的感觉，例如：我不知道这里点了会发生什么"></textarea></label>
       <div class="review-form-actions"><button class="secondary" type="button" data-review-cancel>取消</button><button type="submit">提交</button></div>
     </form>`;
-    window.kaiyuanI18n.translateSubtree(modal);
+    window.chatcommonsI18n.translateSubtree(modal);
     $('[data-selected-context]', modal).textContent = l('你选择了：', 'You selected: ') + (visibleText(element) || l('页面上的这个位置', 'this part of the page'));
     document.body.appendChild(modal);
     const form = $('.review-form', modal);
@@ -228,7 +228,7 @@
   toolbar.className = 'review-toolbar';
   toolbar.dataset.reviewUi = 'true';
   toolbar.innerHTML = `<strong>原型评审</strong><small>正常操作页面；需要评论时再点“标注意见”。</small><div class="review-toolbar-actions"><button type="button" data-review-select>标注意见</button><button type="button" class="secondary" data-review-list>已有意见</button></div><div class="review-list" id="review-list" hidden></div>`;
-  window.kaiyuanI18n.translateSubtree(toolbar);
+  window.chatcommonsI18n.translateSubtree(toolbar);
   document.body.appendChild(toolbar);
   $('[data-review-select]').onclick = () => setSelecting(!state.selecting);
   $('[data-review-list]').onclick = () => { const list = $('#review-list'); list.hidden = !list.hidden; if (!list.hidden) renderList(); };
@@ -249,7 +249,7 @@
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && state.selecting) setSelecting(false); });
   window.addEventListener('resize', renderMarkers);
   window.addEventListener('chatcommons:screen-change', renderMarkers);
-  window.addEventListener('kaiyuan:locale-change', () => {
+  window.addEventListener('chatcommons:locale-change', () => {
     setSelecting(state.selecting);
     renderList();
     renderMarkers();

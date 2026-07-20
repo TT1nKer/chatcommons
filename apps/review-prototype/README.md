@@ -1,12 +1,11 @@
-# kaiyuan UI review prototype
+# ChatCommons UI review prototype
 
 This is an intentionally isolated browser prototype for validating product
-navigation before the Tauri desktop client exists. It is not a kaiyuan node
+navigation before the Tauri desktop client exists. It is not a ChatCommons node
 and does not read protocol identities or community databases.
 
-`kaiyuan` is the current user-facing product name. Existing repository, Rust
-crate and deployment identifiers intentionally remain unchanged until a separate
-protocol naming decision records compatibility and migration consequences.
+`ChatCommons` is the user-facing product name. The prototype may be hosted
+under a parent website namespace without inheriting that website's brand.
 
 The prototype demonstrates:
 
@@ -54,4 +53,5 @@ and removed from the visible URL. Do not publish either credential.
 The production service is for invited design review only. It does not implement
 accounts, password recovery, multiple review projects, backups, or public access.
 The service can be rolled back by repointing its `current` symlink and restarting
-the isolated systemd unit; the existing business backend is not involved.
+the isolated systemd unit. The reference deployment nests the application under
+the parent ttinker website at `/chatcommons/`; it does not own the site root.
