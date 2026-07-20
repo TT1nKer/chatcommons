@@ -55,3 +55,21 @@ accounts, password recovery, multiple review projects, backups, or public access
 The service can be rolled back by repointing its `current` symlink and restarting
 the isolated systemd unit. The reference deployment nests the application under
 the parent ttinker website at `/chatcommons/`; it does not own the site root.
+
+## ttinker deployment
+
+The current review build is served at `https://ttinker.dev/chatcommons/`.
+Deployment secrets are generated on the host and kept only in
+`/etc/ttinker-chatcommons-review.env`; they must never be committed.
+
+- `deploy/nginx-ttinker-site.conf` is the complete initial HTTPS virtual host.
+- `deploy/nginx-chatcommons-location.conf` contains only the locations needed
+  when the parent ttinker site later replaces the placeholder root.
+- `deploy/ttinker-chatcommons-review.service` keeps the API on loopback port
+  8091, behind Nginx.
+- Let's Encrypt uses the webroot `/var/www/ttinker/acme`, so renewal does not
+  require stopping Nginx. Verify changes with `certbot renew --dry-run`.
+
+Only the static prototype and its lightweight feedback API are operated here.
+The hosted-service boundary, including the exclusion of video and bulk relay
+traffic, is recorded in `docs/governance/control-boundaries.md`.
