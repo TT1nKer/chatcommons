@@ -54,6 +54,22 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         self.assertIn("position: absolute", styles)
         self.assertNotIn("position: fixed; z-index: 990", styles)
 
+    def test_compact_density_is_coherent_and_persistent(self):
+        application = (PUBLIC / "app.js").read_text()
+        styles = (PUBLIC / "styles.css").read_text()
+        self.assertIn("chatcommons-density", application)
+        self.assertIn("localStorage.setItem(densityStorageKey, density)", application)
+        self.assertIn("applyDensity(storedDensity(), false)", application)
+        for selector in (
+            '.app-shell[data-density="compact"] .workspace',
+            '.app-shell[data-density="compact"] .pulse-list button',
+            '.app-shell[data-density="compact"] .community-card',
+            '.app-shell[data-density="compact"] .room-strip',
+            '.app-shell[data-density="compact"] .message',
+            '.app-shell[data-density="compact"] .composer',
+        ):
+            self.assertIn(selector, styles)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@
   const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
   const i18n = window.chatcommonsI18n;
   const l = (chinese, english) => i18n.pick(chinese, english);
+  const densityStorageKey = 'chatcommons-density';
   const state = { community: 'weekend', room: 'general', screen: 'home' };
   const rooms = {
     general: { zh: '闲聊', en: 'General' },
@@ -16,6 +17,22 @@
     opensource: { zh: '开源小组', en: 'Open Source Group', symbolZh: '开', symbolEn: 'O', symbolClass: 'symbol-blue' },
     family: { zh: '家里人', en: 'Family', symbolZh: '家', symbolEn: 'F', symbolClass: 'symbol-green' },
   };
+
+  function storedDensity() {
+    try { return localStorage.getItem(densityStorageKey) === 'compact' ? 'compact' : 'comfortable'; }
+    catch (_) { return 'comfortable'; }
+  }
+
+  function applyDensity(value, persist = true) {
+    const density = value === 'compact' ? 'compact' : 'comfortable';
+    $('#app-shell').dataset.density = density;
+    if (persist) {
+      try { localStorage.setItem(densityStorageKey, density); }
+      catch (_) { /* The selected density still applies for this session. */ }
+    }
+  }
+
+  applyDensity(storedDensity(), false);
 
   function roomName() {
     const room = rooms[state.room] || rooms.general;
@@ -186,8 +203,9 @@
       };
     });
     $$('[data-density-choice]', panel).forEach((button) => {
+      button.classList.toggle('is-active', $('#app-shell').dataset.density === button.dataset.densityChoice);
       button.onclick = () => {
-        $('#app-shell').dataset.density = button.dataset.densityChoice;
+        applyDensity(button.dataset.densityChoice);
         $$('[data-density-choice]', panel).forEach((item) => item.classList.toggle('is-active', item === button));
       };
     });
