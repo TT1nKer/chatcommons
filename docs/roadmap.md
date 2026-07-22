@@ -162,6 +162,18 @@ See
 See
 [`ADR 0020`](adr/0020-private-home-server-runtime-boundaries.md).
 
+## M3e — private Home Server snapshot and recovery (implemented locally)
+
+- root-only, bounded snapshot directories with atomic completion
+- consistent stopped-service event export plus server identity and runtime config
+- restart-on-success-or-failure behavior for instances stopped by backup
+- checksum, identity and full archive validation during restore
+- fail-closed restore into a new state without overwriting an existing instance
+- no provider lock-in, upload, encryption, retention schedule or automatic deletion
+
+See
+[`ADR 0021`](adr/0021-private-server-snapshots.md).
+
 ## Suggested M2f
 
 Repeat M2e across a small NAT/firewall matrix, record direct-upgrade latency,

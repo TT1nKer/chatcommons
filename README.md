@@ -139,13 +139,15 @@ cargo run --bin chatcommons-node -- sync-home-server \
 Clients that know the declaration authenticate this exact server device without
 making its operator a community member. The server accepts current members,
 persists signed events in SQLite, and serves them when other members later come
-online. It has a logical event-body storage quota, an exclusive state lock and a
-least-privilege systemd template for private Linux testing. It still has no
-per-peer persistent rate limit, automated backup, monitoring, endpoint discovery
-or attachment storage; do not expose it as a public service. See
+online. It has a logical event-body storage quota, an exclusive state lock, a
+least-privilege systemd template and operator-driven snapshot/restore scripts for
+private Linux testing. It still has no per-peer persistent rate limit, scheduled
+off-host backup, monitoring, endpoint discovery or attachment storage; do not
+expose it as a public service. See
 [ADR 0018](docs/adr/0018-minimal-community-home-server.md) and
 [ADR 0019](docs/adr/0019-bounded-community-archives-and-declared-dialing.md),
-[ADR 0020](docs/adr/0020-private-home-server-runtime-boundaries.md) and the
+[ADR 0020](docs/adr/0020-private-home-server-runtime-boundaries.md),
+[ADR 0021](docs/adr/0021-private-server-snapshots.md) and the
 [private deployment guide](deploy/README.md).
 
 The fallback path has also completed a physical cross-NAT measurement between a

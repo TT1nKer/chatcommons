@@ -1,0 +1,123 @@
+#!/bin/sh
+set -eu
+umask 077
+
+NODE=/opt/chatcommons/bin/chatcommons-node
+STATE_ROOT=/var/lib/chatcommons
+CONFIG_ROOT=/etc/chatcommons
+UNIT_PREFIX=chatcommons-home-server@
+MAX_IDENTITY_BYTES=4096
+MAX_ENVIRONMENT_BYTES=16384
+
+fail() {
+    printf 'error: %s\n' "$1" >&2
+    exit 1
+}
+
+valid_instance() {
+    case "$1" in
+        ''|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*) return 1 ;;
+    esac
+    [ "${#1}" -le 64 ]
+}
+
+read_community_id() {
+    file=$1
+    count=$(grep -c '^CHATCOMMONS_COMMUNITY_ID=' "$file" || true)
+    [ "$count" -eq 1 ] || fail "service environment must contain one Community ID"
+    value=$(sed -n 's/^CHATCOMMONS_COMMUNITY_ID=//p' "$file")
+    printf '%s\n' "$value" | grep -Eq '^[0-9a-f]{64}$' \
+        || fail "service environment contains an invalid Community ID"
+    printf '%s\n' "$value"
+}
+
+[ "$(id -u)" -eq 0 ] || fail "backup must run as root"
+[ "$#" -eq 2 ] || fail "usage: chatcommons-backup <instance> <backup-root>"
+
+instance=$1
+backup_root=$2
+valid_instance "$instance" || fail "instance name is invalid"
+[ -x "$NODE" ] || fail "ChatCommons node is not installed"
+
+state=$STATE_ROOT/$instance
+environment=$CONFIG_ROOT/$instance.env
+unit=$UNIT_PREFIX$instance.service
+[ -d "$state" ] && [ ! -L "$state" ] || fail "instance state directory is missing or unsafe"
+[ -f "$state/identity.json" ] && [ ! -L "$state/identity.json" ] \
+    || fail "instance identity is missing or unsafe"
+[ -f "$environment" ] && [ ! -L "$environment" ] \
+    || fail "instance environment is missing or unsafe"
+[ "$(stat -c '%s' "$state/identity.json")" -le "$MAX_IDENTITY_BYTES" ] \
+    || fail "instance identity exceeds its size limit"
+[ "$(stat -c '%s' "$environment")" -le "$MAX_ENVIRONMENT_BYTES" ] \
+    || fail "instance environment exceeds its size limit"
+community=$(read_community_id "$environment")
+
+if [ ! -e "$backup_root" ]; then
+    install -o root -g root -m 0700 -d "$backup_root"
+fi
+[ -d "$backup_root" ] && [ ! -L "$backup_root" ] \
+    || fail "backup root is not a safe directory"
+[ "$(stat -c '%u:%g' "$backup_root")" = 0:0 ] \
+    || fail "backup root must be owned by root"
+[ "$(stat -c '%a' "$backup_root")" = 700 ] \
+    || fail "backup root must have mode 0700"
+
+timestamp=$(date -u '+%Y%m%dT%H%M%SZ')
+final=$backup_root/$instance-$timestamp-$$
+stage=$backup_root/.$instance-$timestamp-$$.partial
+temporary_archive=$state/.backup-$timestamp-$$.ccarchive
+test ! -e "$final" && test ! -e "$stage" && test ! -e "$temporary_archive" \
+    || fail "snapshot destination already exists"
+
+restart=0
+cleanup() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ -n "${stage:-}" ] && [ -d "$stage" ]; then
+        rm -rf -- "$stage"
+    fi
+    if [ -n "${temporary_archive:-}" ] && [ -f "$temporary_archive" ]; then
+        rm -f -- "$temporary_archive"
+    fi
+    if [ "$restart" -eq 1 ] && ! systemctl start "$unit"; then
+        status=1
+    fi
+    exit "$status"
+}
+trap cleanup EXIT HUP INT TERM
+
+if systemctl is-active --quiet "$unit"; then
+    restart=1
+    systemctl stop "$unit"
+fi
+
+install -o root -g root -m 0700 -d "$stage"
+runuser -u chatcommons -- "$NODE" export-community \
+    --state "$state" \
+    --community "$community" \
+    --output "$temporary_archive" >/dev/null
+install -o root -g root -m 0600 "$temporary_archive" "$stage/community.ccarchive"
+rm -f "$temporary_archive"
+temporary_archive=
+install -o root -g root -m 0600 "$state/identity.json" "$stage/identity.json"
+install -o root -g root -m 0600 "$environment" "$stage/service.env"
+printf 'SNAPSHOT_VERSION=1\nINSTANCE=%s\nCOMMUNITY_ID=%s\nCREATED_AT=%s\n' \
+    "$instance" "$community" "$timestamp" > "$stage/manifest"
+(
+    cd "$stage"
+    sha256sum identity.json community.ccarchive service.env > SHA256SUMS
+)
+chmod 0700 "$stage"
+chmod 0600 "$stage"/*
+mv "$stage" "$final"
+stage=
+
+if [ "$restart" -eq 1 ]; then
+    systemctl start "$unit"
+    restart=0
+fi
+
+printf 'SNAPSHOT_PATH=%s\n' "$final"
+printf 'COMMUNITY_ID=%s\n' "$community"
+printf 'SERVICE_RESTARTED=%s\n' "$(systemctl is-active "$unit" 2>/dev/null || true)"
