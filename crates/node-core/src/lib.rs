@@ -139,6 +139,10 @@ impl CoreNode {
         self.events(&ids)
     }
 
+    pub fn stored_event_bytes(&self) -> Result<u64, NodeError> {
+        Ok(self.store.stored_event_bytes()?)
+    }
+
     pub fn ancestry(&self, event_id: EventId, limit: usize) -> Result<Vec<SignedEvent>, NodeError> {
         if limit == 0 {
             return Err(NodeError::AncestryLimitExceeded);

@@ -150,6 +150,18 @@ See [`ADR 0018`](adr/0018-minimal-community-home-server.md).
 See
 [`ADR 0019`](adr/0019-bounded-community-archives-and-declared-dialing.md).
 
+## M3d — private Home Server runtime boundaries (implemented locally)
+
+- one private advisory process lock per node state
+- bounded logical event-body storage, including unresolved sync events
+- configurable 512 MiB default Home Server quota
+- least-privilege systemd template with per-instance state directories
+- loopback-first deployment guidance that leaves firewall and cloud rules unchanged
+- no claim of public-service readiness or filesystem-level quota enforcement
+
+See
+[`ADR 0020`](adr/0020-private-home-server-runtime-boundaries.md).
+
 ## Suggested M2f
 
 Repeat M2e across a small NAT/firewall matrix, record direct-upgrade latency,

@@ -5,13 +5,14 @@ goal is simple: your community, your rules, your chat. The current workspace
 contains protocol v2, one deliberately small reference chat profile, single-use
 bearer invitations, secure invitation bootstrap, direct QUIC synchronization,
 relay-assisted hole punching, and an owner-signed replaceable home-server
-declaration with a diagnostic authenticated Home Server process. It contains no
-production hosted service, release binary, voice implementation, or GUI.
+declaration with a bounded diagnostic authenticated Home Server process. It
+contains no production hosted service, release binary, voice implementation, or
+GUI.
 
 ## Workspace
 
 - `chatcommons-crypto`: Ed25519 identities and byte-level verification
-- `chatcommons-cli`: Unix-only M2c-M3c diagnostic executables
+- `chatcommons-cli`: Unix-only M2c-M3d diagnostic executables
 - `chatcommons-protocol`: opaque signed envelopes, canonical encoding, parsing and IDs
 - `chatcommons-storage`: idempotent SQLite event persistence
 - `chatcommons-node-core`: generic DAG validation and local ingestion
@@ -19,7 +20,7 @@ production hosted service, release binary, voice implementation, or GUI.
 - `chatcommons-sync`: bounded DAG synchronization over direct or relayed connections
 - `chatcommons-relay`: bounded, ephemeral development Circuit Relay v2 node
 
-## M2c-M3c diagnostic node
+## M2c-M3d diagnostic node
 
 The current executable is a developer connectivity tool, not an end-user client.
 It persists plaintext development keys only on Unix, with a `0700` state
@@ -57,8 +58,9 @@ cargo run --bin chatcommons-node -- join \
 
 The code contains a bearer secret and the diagnostic CLI exposes it in terminal
 and process arguments. Use development identities only. The command has no
-discovery, production relay configuration or process lock. Run one process per
-state directory and restrict the diagnostic listener to a test environment. See
+discovery or production relay configuration. Mutating and long-running commands
+hold an advisory per-state process lock; restrict the diagnostic listener to a
+test environment. See
 [ADR 0014](docs/adr/0014-m2c-diagnostic-node.md) and
 [ADR 0015](docs/adr/0015-secure-invitation-bootstrap.md).
 
@@ -120,7 +122,8 @@ Start the persistent role:
 cargo run --bin chatcommons-node -- serve-community \
   --state <server-directory> \
   --community <community-id> \
-  --listen /ip4/0.0.0.0/udp/4001/quic-v1
+  --listen /ip4/0.0.0.0/udp/4001/quic-v1 \
+  --max-store-bytes 536870912
 ```
 
 A member whose database already contains the signed declaration can derive the
@@ -136,11 +139,14 @@ cargo run --bin chatcommons-node -- sync-home-server \
 Clients that know the declaration authenticate this exact server device without
 making its operator a community member. The server accepts current members,
 persists signed events in SQLite, and serves them when other members later come
-online. The current CLI has no production provisioning, quotas, backup,
-monitoring, process lock, endpoint discovery, or attachment storage; do not
-expose it as a public service. See
+online. It has a logical event-body storage quota, an exclusive state lock and a
+least-privilege systemd template for private Linux testing. It still has no
+per-peer persistent rate limit, automated backup, monitoring, endpoint discovery
+or attachment storage; do not expose it as a public service. See
 [ADR 0018](docs/adr/0018-minimal-community-home-server.md) and
-[ADR 0019](docs/adr/0019-bounded-community-archives-and-declared-dialing.md).
+[ADR 0019](docs/adr/0019-bounded-community-archives-and-declared-dialing.md),
+[ADR 0020](docs/adr/0020-private-home-server-runtime-boundaries.md) and the
+[private deployment guide](deploy/README.md).
 
 The fallback path has also completed a physical cross-NAT measurement between a
 macOS hotspot client and Windows/WSL on a separate home connection. The direct

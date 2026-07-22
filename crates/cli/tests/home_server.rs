@@ -391,6 +391,8 @@ fn declared_home_server_relays_events_between_offline_members()
         &community_text,
         "--listen",
         &declared_endpoint,
+        "--max-store-bytes",
+        "1048576",
     ])?;
     let mut uploader = Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
         .args([

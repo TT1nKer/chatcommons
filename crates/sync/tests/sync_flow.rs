@@ -216,3 +216,29 @@ fn large_event_batches_are_split_by_encoded_size() -> Result<(), Box<dyn std::er
     }
     Ok(())
 }
+
+#[test]
+fn storage_quota_rejects_new_events_without_persisting_them()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let identity = Identity::from_seed([77; 32]);
+    let genesis = create_genesis(&identity, "sync.genesis", vec![], 1);
+    let community = community_id(&genesis)?;
+    let message = event(&identity, community, vec![genesis.event_id], 2);
+    let mut node = CoreNode::open(EventStore::open(directory.path().join("quota.db"))?, None)?;
+    node.ingest(vec![genesis])?;
+    let limit =
+        node.stored_event_bytes()? + u64::try_from(serde_json::to_vec(&message)?.len())? - 1;
+    let mut peer = SyncPeer::new(node, community)?.with_storage_quota(limit)?;
+
+    assert!(matches!(
+        peer.receive(SyncMessage::Events {
+            community_id: community,
+            events: vec![message.clone()],
+        }),
+        Err(SyncError::StorageQuotaExceeded { limit: actual }) if actual == limit
+    ));
+    assert!(peer.node().event(message.event_id)?.is_none());
+    assert_eq!(peer.pending_len(), 0);
+    Ok(())
+}

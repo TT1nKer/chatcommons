@@ -3,7 +3,7 @@ use chatcommons_sync::auth::{AuthError, DeviceIdentity};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File, OpenOptions, TryLockError},
     io::{Read, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -14,6 +14,7 @@ use thiserror::Error;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 pub const IDENTITY_FILE: &str = "identity.json";
+pub const LOCK_FILE: &str = "state.lock";
 const STATE_VERSION: u16 = 1;
 const MAX_IDENTITY_BYTES: u64 = 4 * 1024;
 
@@ -27,6 +28,8 @@ pub enum StateError {
     AlreadyInitialized,
     #[error("identity state does not exist")]
     NotInitialized,
+    #[error("state directory is already in use by another process")]
+    AlreadyInUse,
     #[error("state permissions allow access by another user")]
     InsecurePermissions,
     #[error("identity state exceeds its size limit")]
@@ -48,6 +51,10 @@ pub struct NodeState {
     device: DeviceIdentity,
     created_at_ms: i64,
     directory: PathBuf,
+}
+
+pub struct StateLock {
+    _file: File,
 }
 
 impl NodeState {
@@ -146,6 +153,26 @@ impl NodeState {
 
     pub fn database_path(&self) -> PathBuf {
         self.directory.join("events.sqlite3")
+    }
+
+    pub fn acquire_lock(&self) -> Result<StateLock, StateError> {
+        let lock_path = self.directory.join(LOCK_FILE);
+        if fs::symlink_metadata(&lock_path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(StateError::SymbolicLink);
+        }
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let file = options.open(lock_path)?;
+        validate_private_mode(&file.metadata()?)?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Err(StateError::AlreadyInUse),
+            Err(TryLockError::Error(error)) => return Err(StateError::Io(error)),
+        }
+        Ok(StateLock { _file: file })
     }
 
     fn from_seeds(

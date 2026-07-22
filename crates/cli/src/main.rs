@@ -34,7 +34,7 @@ use thiserror::Error;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-const USAGE: &str = r#"ChatCommons M2c-M3c diagnostic node
+const USAGE: &str = r#"ChatCommons M2c-M3d diagnostic node
 
 Usage:
   chatcommons-node init --state <directory>
@@ -54,6 +54,7 @@ Usage:
     [--dial-peer <peer-id> --dial-address <multiaddr>] [--exit-after-events <count>]
   chatcommons-node serve-community --state <directory> --community <hex>
     --listen <multiaddr> [--relay-address <relay-base-multiaddr>]
+    [--max-store-bytes <bytes>]
   chatcommons-node sync-home-server --state <directory> --community <hex>
     --listen <multiaddr> [--relay-address <relay-base-multiaddr>]
     [--exit-after-events <count>]
@@ -62,6 +63,7 @@ This is a developer tool. Relay-assisted hole punching requires an explicit rela
 It has no discovery, production relay configuration, or GUI.
 "#;
 const MAX_ALLOWED_USERS: usize = 256;
+const DEFAULT_HOME_SERVER_STORE_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 enum CliError {
@@ -229,6 +231,7 @@ fn command_info(options: &Options) -> Result<(), CliError> {
 fn command_create_community(options: &Options) -> Result<(), CliError> {
     options.allow_only(&["--state", "--name"])?;
     let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
     let store = EventStore::open(state.database_path())?;
     if !store.is_empty()? {
         return Err(CliError::DatabaseNotEmpty);
@@ -249,6 +252,7 @@ fn command_set_home_server(options: &Options) -> Result<(), CliError> {
         "--endpoint",
     ])?;
     let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
     let community = parse_community(options.require_one("--community")?)?;
     let server_public_key = parse_hex_32(options.require_one("--server-public-key")?)?;
     identity::ed25519::PublicKey::try_from_bytes(&server_public_key)
@@ -297,6 +301,7 @@ fn command_set_home_server(options: &Options) -> Result<(), CliError> {
 fn command_export_community(options: &Options) -> Result<(), CliError> {
     options.allow_only(&["--state", "--community", "--output"])?;
     let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
     let community = parse_community(options.require_one("--community")?)?;
     let store = EventStore::open(state.database_path())?;
     if store.events(community)?.is_empty() {
@@ -318,6 +323,7 @@ fn command_export_community(options: &Options) -> Result<(), CliError> {
 fn command_import_community(options: &Options) -> Result<(), CliError> {
     options.allow_only(&["--state", "--input"])?;
     let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
     let bytes = read_archive_file(Path::new(options.require_one("--input")?))?;
     let validated = archive::parse(&bytes)?.validate()?;
     let community = validated.community();
@@ -438,6 +444,7 @@ fn create_private_output(path: &Path) -> Result<File, CliError> {
 fn command_create_invite(options: &Options) -> Result<(), CliError> {
     options.allow_only(&["--state", "--community", "--address"])?;
     let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
     let community = parse_community(options.require_one("--community")?)?;
     let address = parse_multiaddr(options.require_one("--address")?)?;
     let store = EventStore::open(state.database_path())?;
@@ -477,6 +484,7 @@ fn command_create_invite(options: &Options) -> Result<(), CliError> {
 async fn command_join(options: &Options) -> Result<(), CliError> {
     options.allow_only(&["--state", "--invite-code"])?;
     let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
     let envelope = parse_code(options.require_one("--invite-code")?)?.validate()?;
     let prepared = parse_invite_package(envelope.invite_package())?.prepare()?;
     let community = prepared.community();
@@ -651,9 +659,13 @@ async fn command_network(
             "--relay-address",
             "--exit-after-events",
         ])?,
-        (NetworkRole::HomeServer, DialMode::Explicit) => {
-            options.allow_only(&["--state", "--community", "--listen", "--relay-address"])?
-        }
+        (NetworkRole::HomeServer, DialMode::Explicit) => options.allow_only(&[
+            "--state",
+            "--community",
+            "--listen",
+            "--relay-address",
+            "--max-store-bytes",
+        ])?,
         (NetworkRole::HomeServer, DialMode::HomeServer) => {
             return Err(CliError::Arguments(
                 "Home Server role cannot dial itself".into(),
@@ -661,6 +673,7 @@ async fn command_network(
         }
     }
     let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
     let community = parse_community(options.require_one("--community")?)?;
     let listen = parse_multiaddr(options.require_one("--listen")?)?;
     let relay = options
@@ -677,6 +690,17 @@ async fn command_network(
         .optional_one("--exit-after-events")?
         .map(parse_positive_usize)
         .transpose()?;
+    let max_store_bytes = if role == NetworkRole::HomeServer {
+        Some(
+            options
+                .optional_one("--max-store-bytes")?
+                .map(parse_positive_u64)
+                .transpose()?
+                .unwrap_or(DEFAULT_HOME_SERVER_STORE_BYTES),
+        )
+    } else {
+        None
+    };
 
     let store = EventStore::open(state.database_path())?;
     let database_is_empty = store.is_empty()?;
@@ -722,10 +746,15 @@ async fn command_network(
     }
     let certificate =
         create_device_certificate(state.user(), state.device(), state.created_at_ms());
+    let sync_peer = SyncPeer::new(core, community)?;
+    let sync_peer = match max_store_bytes {
+        Some(limit) => sync_peer.with_storage_quota(limit)?,
+        None => sync_peer,
+    };
     let mut network = NetworkNode::new(
         state.device(),
         certificate,
-        SyncPeer::new(core, community)?,
+        sync_peer,
         allowed_users.clone(),
         RevocationSet::default(),
     )?;
@@ -749,6 +778,9 @@ async fn command_network(
             "peer"
         }
     );
+    if let Some(limit) = max_store_bytes {
+        println!("MAX_STORE_BYTES={limit}");
+    }
     network.listen(listen)?;
     if let Some(relay) = relay {
         let route = network.reserve_relay(relay)?;
@@ -966,6 +998,18 @@ fn parse_positive_usize(value: &str) -> Result<usize, CliError> {
     if parsed == 0 {
         return Err(CliError::Arguments(
             "event count must be greater than zero".into(),
+        ));
+    }
+    Ok(parsed)
+}
+
+fn parse_positive_u64(value: &str) -> Result<u64, CliError> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| CliError::Arguments("byte count must be a positive integer".into()))?;
+    if parsed == 0 {
+        return Err(CliError::Arguments(
+            "byte count must be greater than zero".into(),
         ));
     }
     Ok(parsed)
