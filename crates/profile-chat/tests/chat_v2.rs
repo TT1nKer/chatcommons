@@ -3,7 +3,9 @@ use chatcommons_profile_chat::{
     ChatPayload, HomeServerId, InviteCapability, InviteError, MAX_INVITE_PACKAGE_BYTES,
     RejectionReason, create_chat_event, create_chat_genesis, parse_invite_package, resolve,
 };
-use chatcommons_protocol::{CommunityId, SignedEvent, community_id};
+use chatcommons_protocol::{
+    CommunityId, EventContent, PROTOCOL_VERSION, SignedEvent, community_id, create_signed,
+};
 
 fn accept_invitation(
     capability: &InviteCapability,
@@ -127,6 +129,47 @@ fn governance_is_a_chat_profile_rule_not_a_core_rule() -> Result<(), Box<dyn std
         resolution.rejected.get(&transfer.event_id),
         Some(&RejectionReason::NotOwner)
     );
+    Ok(())
+}
+
+#[test]
+fn core_valid_malformed_profile_payload_is_rejected_without_losing_projection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let owner = Identity::from_seed([59; 32]);
+    let genesis = create_chat_genesis(&owner, "Untrusted payload", 1)?;
+    let community = community_id(&genesis)?;
+    let malformed = create_signed(
+        EventContent {
+            protocol_version: PROTOCOL_VERSION,
+            community_id: Some(community),
+            parents: vec![genesis.event_id],
+            timestamp_ms: 2,
+            event_type: "chat.message.create".into(),
+            payload: b"not-json".to_vec(),
+        },
+        &owner,
+    );
+    let child = create_chat_event(
+        &owner,
+        community,
+        vec![malformed.event_id],
+        3,
+        ChatPayload::OwnershipTransfer {
+            new_owner: owner.user_id(),
+        },
+    )?;
+
+    let resolution = resolve(&[genesis.clone(), malformed.clone(), child.clone()])?;
+    assert_eq!(
+        resolution.rejected.get(&malformed.event_id),
+        Some(&RejectionReason::InvalidPayload)
+    );
+    assert_eq!(
+        resolution.rejected.get(&child.event_id),
+        Some(&RejectionReason::ParentRejected)
+    );
+    assert_eq!(resolution.snapshot.owner, Some(owner.user_id()));
+    assert_eq!(resolution.snapshot.event_ids, [genesis.event_id].into());
     Ok(())
 }
 

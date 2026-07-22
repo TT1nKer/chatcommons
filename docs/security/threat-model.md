@@ -42,6 +42,7 @@ ChatCommons distinguishes five actors:
 | report forgery | screenshots or edited plaintext | signed report bundle tied to original signed event; human review and appeal |
 | metadata surveillance | relay observes IP addresses, Peer IDs, social graph and timing even though Noise protects the end-to-end transport stream | minimize retained logs, separate services, short retention, avoid central relationship index |
 | relay resource abuse | reservations or circuits consume sockets, bandwidth and memory | hard reservation, circuit, byte, duration and per-peer/IP rate limits; public operation remains gated |
+| Home Server abuse | members submit malformed profile events or exhaust persistent storage; operators withhold history | deterministic profile rejection, signed client verification and replaceable hosting; storage/rate quotas, backups and public operation remain gated |
 
 ## Product constraints for the first release
 

@@ -203,8 +203,10 @@ pub struct NetworkNode {
     sync: SyncPeer,
     certificate: auth::DeviceCertificate,
     allowed_users: BTreeSet<UserId>,
+    trusted_infrastructure_devices: BTreeSet<auth::DeviceId>,
     revocations: auth::RevocationSet,
     authenticated: BTreeSet<PeerId>,
+    authenticated_devices: BTreeMap<PeerId, auth::AuthenticatedDevice>,
     authentication_sent: BTreeSet<PeerId>,
     accepted_by_remote: BTreeSet<PeerId>,
     sync_started: BTreeSet<PeerId>,
@@ -268,8 +270,10 @@ impl NetworkNode {
             sync,
             certificate,
             allowed_users,
+            trusted_infrastructure_devices: BTreeSet::new(),
             revocations,
             authenticated: BTreeSet::new(),
+            authenticated_devices: BTreeMap::new(),
             authentication_sent: BTreeSet::new(),
             accepted_by_remote: BTreeSet::new(),
             sync_started: BTreeSet::new(),
@@ -358,6 +362,37 @@ impl NetworkNode {
 
     pub fn is_authenticated(&self, peer: PeerId) -> bool {
         self.authenticated.contains(&peer)
+    }
+
+    /// Replace the live authorization projection after signed community state
+    /// changes. Peers removed by the new projection immediately lose sync
+    /// authorization even if their transport connection remains open.
+    pub fn replace_authorization(
+        &mut self,
+        allowed_users: BTreeSet<UserId>,
+        trusted_infrastructure_devices: BTreeSet<auth::DeviceId>,
+    ) {
+        self.allowed_users = allowed_users;
+        self.trusted_infrastructure_devices = trusted_infrastructure_devices;
+        let rejected: Vec<PeerId> = self
+            .authenticated_devices
+            .iter()
+            .filter(|(_, device)| {
+                !self.allowed_users.contains(&device.user_id)
+                    && !self
+                        .trusted_infrastructure_devices
+                        .contains(&device.device_id)
+            })
+            .map(|(peer, _)| *peer)
+            .collect();
+        for peer in rejected {
+            self.authenticated.remove(&peer);
+            self.authenticated_devices.remove(&peer);
+            self.authentication_sent.remove(&peer);
+            self.accepted_by_remote.remove(&peer);
+            self.sync_started.remove(&peer);
+            let _ = self.swarm.disconnect_peer_id(peer);
+        }
     }
 
     pub fn sync_peer(&self) -> &SyncPeer {
@@ -509,6 +544,8 @@ impl NetworkNode {
             self.bootstrap_grants.remove(&pending.invitation);
             self.allowed_users.insert(pending.authenticated.user_id);
             self.authenticated.insert(peer);
+            self.authenticated_devices
+                .insert(peer, pending.authenticated);
             self.swarm
                 .behaviour_mut()
                 .request_response
@@ -572,6 +609,7 @@ impl NetworkNode {
                         return Ok(NetworkEvent::RelayDisconnected(peer_id));
                     }
                     self.authenticated.remove(&peer_id);
+                    self.authenticated_devices.remove(&peer_id);
                     self.authentication_sent.remove(&peer_id);
                     self.accepted_by_remote.remove(&peer_id);
                     self.sync_started.remove(&peer_id);
@@ -936,6 +974,9 @@ impl NetworkNode {
                 Ok(NetworkEvent::Authenticated(peer))
             }
             NetworkResponse::Sync { messages } => {
+                if !self.authenticated.contains(&peer) {
+                    return Err(NetworkError::Rejected(RejectionCode::NotAuthenticated));
+                }
                 if messages.len() > MAX_MESSAGES_PER_FRAME {
                     return Err(NetworkError::Rejected(RejectionCode::FrameLimit));
                 }
@@ -1017,6 +1058,7 @@ impl NetworkNode {
                 })?;
                 self.allowed_users.insert(provisional.user_id);
                 self.authenticated.insert(peer);
+                self.authenticated_devices.insert(peer, provisional);
                 self.accepted_by_remote.insert(peer);
                 self.maybe_start_sync(peer)?;
                 let _ = target;
@@ -1040,8 +1082,13 @@ impl NetworkNode {
         certificate: &auth::DeviceCertificate,
     ) -> Result<AuthenticationState, RejectionCode> {
         let authenticated = self.validate_peer_certificate(peer, certificate)?;
-        if self.allowed_users.contains(&authenticated.user_id) {
+        if self.allowed_users.contains(&authenticated.user_id)
+            || self
+                .trusted_infrastructure_devices
+                .contains(&authenticated.device_id)
+        {
             self.authenticated.insert(peer);
+            self.authenticated_devices.insert(peer, authenticated);
             return Ok(AuthenticationState::Full);
         }
         if self

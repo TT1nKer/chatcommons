@@ -5,13 +5,13 @@ goal is simple: your community, your rules, your chat. The current workspace
 contains protocol v2, one deliberately small reference chat profile, single-use
 bearer invitations, secure invitation bootstrap, direct QUIC synchronization,
 relay-assisted hole punching, and an owner-signed replaceable home-server
-declaration. It contains no production home-server service, release binary,
-voice implementation, or GUI.
+declaration with a diagnostic authenticated Home Server process. It contains no
+production hosted service, release binary, voice implementation, or GUI.
 
 ## Workspace
 
 - `chatcommons-crypto`: Ed25519 identities and byte-level verification
-- `chatcommons-cli`: Unix-only M2c-M2e diagnostic executables
+- `chatcommons-cli`: Unix-only M2c-M3b diagnostic executables
 - `chatcommons-protocol`: opaque signed envelopes, canonical encoding, parsing and IDs
 - `chatcommons-storage`: idempotent SQLite event persistence
 - `chatcommons-node-core`: generic DAG validation and local ingestion
@@ -19,7 +19,7 @@ voice implementation, or GUI.
 - `chatcommons-sync`: bounded DAG synchronization over direct or relayed connections
 - `chatcommons-relay`: bounded, ephemeral development Circuit Relay v2 node
 
-## M2c-M2e diagnostic node
+## M2c-M3b diagnostic node
 
 The current executable is a developer connectivity tool, not an end-user client.
 It persists plaintext development keys only on Unix, with a `0700` state
@@ -78,6 +78,53 @@ attempt fails, the bounded relay circuit remains the fallback. The relay binary
 has an ephemeral identity, no persistence and no production operating controls.
 Do not expose it publicly. See
 [ADR 0016](docs/adr/0016-relay-assisted-hole-punching.md).
+
+## Diagnostic Community Home Server
+
+Initialize a separate server state and copy its printed device key into an
+owner-signed declaration:
+
+```sh
+cargo run --bin chatcommons-node -- init --state <server-directory>
+
+cargo run --bin chatcommons-node -- set-home-server \
+  --state <owner-directory> \
+  --community <community-id> \
+  --server-public-key <DEVICE_PUBLIC_KEY> \
+  --endpoint /ip4/<server-ip>/udp/4001/quic-v1
+```
+
+Seed the new server database once through the existing authenticated sync path.
+Run the owner node at a reachable address, then let the server state dial it with
+the owner explicitly allowed during provisioning:
+
+```sh
+cargo run --bin chatcommons-node -- run \
+  --state <server-directory> \
+  --community <community-id> \
+  --listen /ip4/0.0.0.0/udp/4001/quic-v1 \
+  --allow-user <owner-user-id> \
+  --dial-peer <owner-peer-id> \
+  --dial-address <owner-multiaddr>
+```
+
+After synchronization, stop that provisioning process and start the persistent
+role without the temporary allowlist:
+
+```sh
+cargo run --bin chatcommons-node -- serve-community \
+  --state <server-directory> \
+  --community <community-id> \
+  --listen /ip4/0.0.0.0/udp/4001/quic-v1
+```
+
+Clients that know the declaration authenticate this exact server device without
+making its operator a community member. The server accepts current members,
+persists signed events in SQLite, and serves them when other members later come
+online. The current CLI has no production provisioning, quotas, backup,
+monitoring, process lock, endpoint discovery, or attachment storage; do not
+expose it as a public service. See
+[ADR 0018](docs/adr/0018-minimal-community-home-server.md).
 
 The fallback path has also completed a physical cross-NAT measurement between a
 macOS hotspot client and Windows/WSL on a separate home connection. The direct

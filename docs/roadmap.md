@@ -126,6 +126,18 @@ relay still has an ephemeral identity and is not a public-service binary. See
 
 See [`ADR 0017`](adr/0017-replaceable-community-home-server.md).
 
+## M3b — minimal authenticated Community Home Server (implemented locally)
+
+- diagnostic `set-home-server` and `serve-community` commands
+- exact binding between the signed server key, device certificate and Peer ID
+- server operator remains outside community membership and governance
+- SQLite persistence and later delivery between members that are never online together
+- live membership and server-binding authorization refresh after synchronization
+- rejection of undeclared server devices and fail-closed behavior after migration
+- no production operations, discovery, export/import, quotas, attachments or backup automation
+
+See [`ADR 0018`](adr/0018-minimal-community-home-server.md).
+
 ## Suggested M2f
 
 Repeat M2e across a small NAT/firewall matrix, record direct-upgrade latency,

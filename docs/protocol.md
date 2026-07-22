@@ -85,6 +85,18 @@ separate from validating it: members, invites, announcements, the new server, or
 replaceable directories must carry the signed declaration. See
 [`ADR 0017`](adr/0017-replaceable-community-home-server.md).
 
+The diagnostic QUIC implementation treats the declared server public key as one
+exact libp2p device key. Clients admit that device for synchronization without
+making its operator a community member. `serve-community` verifies the inverse:
+its local key must still be the current declaration. Member and infrastructure
+authorization are recomputed after synchronization so removals and migrations
+do not leave stale access. See
+[`ADR 0018`](adr/0018-minimal-community-home-server.md).
+
+A signed Core event whose chat payload is malformed or mismatched is retained as
+a candidate but receives the deterministic `InvalidPayload` profile rejection.
+Its failure does not erase the valid projection or make a network node exit.
+
 ## Resource limits
 
 Protocol v2 rejects JSON envelopes above 256 KiB, more than 32 parents, event types

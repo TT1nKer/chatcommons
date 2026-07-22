@@ -301,6 +301,7 @@ impl ValidatedInvite {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectionReason {
+    InvalidPayload,
     MissingParent,
     ParentRejected,
     WrongCommunity,
@@ -402,17 +403,24 @@ pub fn resolve(events: &[SignedEvent]) -> Result<ChatResolution, ChatError> {
     let mut by_id = BTreeMap::new();
     let mut payloads = BTreeMap::new();
     let mut authors = BTreeMap::new();
+    let mut rejected = BTreeMap::new();
     for event in events {
         validate_event(event)?;
-        payloads.insert(event.event_id, decode(event)?);
         authors.insert(event.event_id, author_id(event)?);
         by_id.entry(event.event_id).or_insert_with(|| event.clone());
+        match decode(event) {
+            Ok(payload) => {
+                payloads.insert(event.event_id, payload);
+            }
+            Err(_) => {
+                rejected.insert(event.event_id, RejectionReason::InvalidPayload);
+            }
+        }
     }
     let mut state = State::default();
     let mut accepted = BTreeSet::new();
     let mut accepted_in_order = Vec::new();
-    let mut rejected = BTreeMap::new();
-    let mut pending: BTreeSet<EventId> = by_id.keys().copied().collect();
+    let mut pending: BTreeSet<EventId> = payloads.keys().copied().collect();
     loop {
         let mut ready: Vec<EventId> = pending
             .iter()

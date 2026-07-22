@@ -2,20 +2,20 @@ use chatcommons_cli::NodeState;
 use chatcommons_crypto::UserId;
 use chatcommons_node_core::{CoreNode, NodeError};
 use chatcommons_profile_chat::{
-    ChatError, InviteCapability, InviteError, create_chat_event, create_chat_genesis,
-    parse_invite_package, resolve,
+    ChatError, ChatPayload, HomeServerId, InviteCapability, InviteError, create_chat_event,
+    create_chat_genesis, parse_invite_package, resolve,
 };
 use chatcommons_protocol::{CommunityId, ProtocolError, community_id};
 use chatcommons_storage::{EventStore, StorageError};
 use chatcommons_sync::{
     SyncError, SyncPeer,
-    auth::{RevocationSet, create_device_certificate},
+    auth::{DeviceId, RevocationSet, create_device_certificate},
     bootstrap::{BootstrapError, create_code, parse_code},
     network::{
         BootstrapGrant, MAX_BOOTSTRAP_ANCESTRY_EVENTS, NetworkError, NetworkEvent, NetworkNode,
     },
 };
-use libp2p::{Multiaddr, PeerId};
+use libp2p::{Multiaddr, PeerId, identity};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env,
@@ -26,12 +26,14 @@ use std::{
 };
 use thiserror::Error;
 
-const USAGE: &str = r#"ChatCommons M2c-M2e diagnostic node
+const USAGE: &str = r#"ChatCommons M2c-M3b diagnostic node
 
 Usage:
   chatcommons-node init --state <directory>
   chatcommons-node info --state <directory>
   chatcommons-node create-community --state <directory> --name <name>
+  chatcommons-node set-home-server --state <directory> --community <hex>
+    --server-public-key <hex> --endpoint <multiaddr-or-url> [--endpoint <...> ...]
   chatcommons-node create-invite --state <directory> --community <hex>
     --address <public-multiaddr>
   chatcommons-node join --state <directory> --invite-code <code>
@@ -39,6 +41,8 @@ Usage:
     --listen <multiaddr> [--allow-user <user-id-hex> ...]
     [--relay-address <relay-base-multiaddr>]
     [--dial-peer <peer-id> --dial-address <multiaddr>] [--exit-after-events <count>]
+  chatcommons-node serve-community --state <directory> --community <hex>
+    --listen <multiaddr> [--relay-address <relay-base-multiaddr>]
 
 This is a developer tool. Relay-assisted hole punching requires an explicit relay.
 It has no discovery, production relay configuration, or GUI.
@@ -85,6 +89,12 @@ enum CliError {
     MissingInvitation,
     #[error("bootstrap endpoint is not an active community member")]
     UntrustedBootstrapEndpoint,
+    #[error("community has no active Home Server declaration")]
+    MissingHomeServer,
+    #[error("local device key does not match the active Home Server declaration")]
+    WrongHomeServerIdentity,
+    #[error("Home Server public key is not a valid Ed25519 device key")]
+    InvalidHomeServerPublicKey,
     #[error("output failed: {0}")]
     Output(#[from] io::Error),
 }
@@ -168,9 +178,11 @@ async fn run() -> Result<(), CliError> {
         "init" => command_init(&options),
         "info" => command_info(&options),
         "create-community" => command_create_community(&options),
+        "set-home-server" => command_set_home_server(&options),
         "create-invite" => command_create_invite(&options),
         "join" => command_join(&options).await,
-        "run" => command_run(&options).await,
+        "run" => command_network(&options, NetworkRole::Peer).await,
+        "serve-community" => command_network(&options, NetworkRole::HomeServer).await,
         _ => Err(CliError::Arguments(format!("unknown command {command}"))),
     }
 }
@@ -199,6 +211,59 @@ fn command_create_community(options: &Options) -> Result<(), CliError> {
     let mut node = CoreNode::open(store, None)?;
     node.ingest(vec![genesis])?;
     println!("COMMUNITY_ID={}", hex::encode(community.as_bytes()));
+    Ok(())
+}
+
+fn command_set_home_server(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&[
+        "--state",
+        "--community",
+        "--server-public-key",
+        "--endpoint",
+    ])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let server_public_key = parse_hex_32(options.require_one("--server-public-key")?)?;
+    identity::ed25519::PublicKey::try_from_bytes(&server_public_key)
+        .map_err(|_| CliError::InvalidHomeServerPublicKey)?;
+    let endpoints = options.many("--endpoint").to_vec();
+    let store = EventStore::open(state.database_path())?;
+    if store.events(community)?.is_empty() {
+        return Err(CliError::WrongDatabaseCommunity);
+    }
+    let mut core = CoreNode::open(store, Some(community))?;
+    let declaration = create_chat_event(
+        state.user(),
+        community,
+        core.heads()?,
+        now_ms()?,
+        ChatPayload::HomeServerSet {
+            server_public_key: server_public_key.to_vec(),
+            endpoints,
+        },
+    )?;
+    let mut candidates = core.all_events()?;
+    candidates.push(declaration.clone());
+    let resolution = resolve(&candidates)?;
+    let accepted = resolution
+        .snapshot
+        .home_server
+        .as_ref()
+        .is_some_and(|binding| {
+            binding.declaration == declaration.event_id
+                && binding.server_public_key == server_public_key
+        });
+    if !accepted {
+        return Err(CliError::ProfileRejected);
+    }
+    core.ingest(vec![declaration.clone()])?;
+    let server_id = HomeServerId::from_public_key(&server_public_key);
+    println!(
+        "HOME_SERVER_DECLARATION_ID={}",
+        hex::encode(declaration.event_id.as_bytes())
+    );
+    println!("HOME_SERVER_ID={}", hex::encode(server_id.as_bytes()));
+    io::stdout().flush()?;
     Ok(())
 }
 
@@ -383,17 +448,28 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
     }
 }
 
-async fn command_run(options: &Options) -> Result<(), CliError> {
-    options.allow_only(&[
-        "--state",
-        "--community",
-        "--listen",
-        "--relay-address",
-        "--allow-user",
-        "--dial-peer",
-        "--dial-address",
-        "--exit-after-events",
-    ])?;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NetworkRole {
+    Peer,
+    HomeServer,
+}
+
+async fn command_network(options: &Options, role: NetworkRole) -> Result<(), CliError> {
+    match role {
+        NetworkRole::Peer => options.allow_only(&[
+            "--state",
+            "--community",
+            "--listen",
+            "--relay-address",
+            "--allow-user",
+            "--dial-peer",
+            "--dial-address",
+            "--exit-after-events",
+        ])?,
+        NetworkRole::HomeServer => {
+            options.allow_only(&["--state", "--community", "--listen", "--relay-address"])?
+        }
+    }
     let state = NodeState::load(options.require_one("--state")?)?;
     let community = parse_community(options.require_one("--community")?)?;
     let listen = parse_multiaddr(options.require_one("--listen")?)?;
@@ -401,7 +477,7 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
         .optional_one("--relay-address")?
         .map(parse_multiaddr)
         .transpose()?;
-    let mut allowed_users = parse_allowed_users(options.many("--allow-user"))?;
+    let explicit_allowed_users = parse_allowed_users(options.many("--allow-user"))?;
     let dial = parse_dial(options)?;
     let exit_after_events = options
         .optional_one("--exit-after-events")?
@@ -422,6 +498,19 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
         },
     )?;
     let profile = resolve(&core.all_events()?)?;
+    let home_server = profile.snapshot.home_server.clone();
+    if role == NetworkRole::HomeServer
+        && !home_server
+            .as_ref()
+            .is_some_and(|binding| binding.server_public_key == state.device().public_key())
+    {
+        return Err(if home_server.is_some() {
+            CliError::WrongHomeServerIdentity
+        } else {
+            CliError::MissingHomeServer
+        });
+    }
+    let mut allowed_users = explicit_allowed_users.clone();
     allowed_users.extend(profile.snapshot.members.iter().copied());
     let mut bootstrap_grants = Vec::new();
     for (invitation, capability_public_key) in profile.snapshot.active_invitations {
@@ -437,9 +526,14 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
         state.device(),
         certificate,
         SyncPeer::new(core, community)?,
-        allowed_users,
+        allowed_users.clone(),
         RevocationSet::default(),
     )?;
+    let trusted_infrastructure_devices = home_server
+        .into_iter()
+        .map(|binding| DeviceId::from_public_key(&binding.server_public_key))
+        .collect();
+    network.replace_authorization(allowed_users, trusted_infrastructure_devices);
     for grant in bootstrap_grants {
         network.register_bootstrap_grant(grant)?;
     }
@@ -447,6 +541,14 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
     println!("USER_ID={}", hex::encode(state.user().user_id().as_bytes()));
     println!("PEER_ID={peer_id}");
     println!("COMMUNITY_ID={}", hex::encode(community.as_bytes()));
+    println!(
+        "ROLE={}",
+        if role == NetworkRole::HomeServer {
+            "home-server"
+        } else {
+            "peer"
+        }
+    );
     network.listen(listen)?;
     if let Some(relay) = relay {
         let route = network.reserve_relay(relay)?;
@@ -532,6 +634,12 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
                 println!("BOOTSTRAP_DECISION={peer} approved={approved}");
             }
         }
+        refresh_network_authorization(
+            &mut network,
+            &explicit_allowed_users,
+            role,
+            state.device().public_key(),
+        )?;
         io::stdout().flush()?;
         if sync_progress
             && exit_after_events
@@ -547,9 +655,45 @@ async fn command_run(options: &Options) -> Result<(), CliError> {
     }
 }
 
+fn refresh_network_authorization(
+    network: &mut NetworkNode,
+    explicit_allowed_users: &BTreeSet<UserId>,
+    role: NetworkRole,
+    local_device_public_key: [u8; 32],
+) -> Result<(), CliError> {
+    let profile = resolve(&network.sync_peer().node().all_events()?)?;
+    if role == NetworkRole::HomeServer
+        && !profile
+            .snapshot
+            .home_server
+            .as_ref()
+            .is_some_and(|binding| binding.server_public_key == local_device_public_key)
+    {
+        return Err(if profile.snapshot.home_server.is_some() {
+            CliError::WrongHomeServerIdentity
+        } else {
+            CliError::MissingHomeServer
+        });
+    }
+    let mut allowed_users = explicit_allowed_users.clone();
+    allowed_users.extend(profile.snapshot.members);
+    let trusted_infrastructure_devices = profile
+        .snapshot
+        .home_server
+        .into_iter()
+        .map(|binding| DeviceId::from_public_key(&binding.server_public_key))
+        .collect();
+    network.replace_authorization(allowed_users, trusted_infrastructure_devices);
+    Ok(())
+}
+
 fn print_identity(state: &NodeState) -> Result<(), CliError> {
     println!("USER_ID={}", hex::encode(state.user().user_id().as_bytes()));
     println!("PEER_ID={}", state.device().peer_id());
+    println!(
+        "DEVICE_PUBLIC_KEY={}",
+        hex::encode(state.device().public_key())
+    );
     println!("STATE_CREATED_AT_MS={}", state.created_at_ms());
     io::stdout().flush()?;
     Ok(())

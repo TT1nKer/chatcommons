@@ -37,8 +37,9 @@ The declaration event's DAG parents are its history checkpoint. A separate
 timestamp, old-server approval, official permit, domain ownership proof, or
 mutable platform record does not determine validity. Endpoint strings are signed
 discovery hints: one to eight unique ASCII values, each at most 512 bytes and
-without whitespace or control characters. A later transport profile must define
-their concrete syntax and prove possession of the selected server key.
+without whitespace or control characters. ADR 0018 binds the diagnostic QUIC
+transport to the selected Ed25519 device key; concrete endpoint syntax and
+domain ownership proof remain production work.
 
 Concurrent owner-authored declarations are applied in deterministic Event ID
 order, independent of arrival order. The projected binding is the last accepted
@@ -86,8 +87,9 @@ The current operator can stop serving or refuse export, but cannot veto a valid
 owner-authored declaration. Official hosting can end its own service without
 creating a protocol-level revocation of the community.
 
-The implemented foundation does not yet provide a home-server binary, endpoint
-transport authentication, server discovery, export/import tooling, signed state
-snapshots, attachment migration, backup automation, Realm policy enforcement, or
-cross-Realm federation. Those require separate milestones and tests rather than
-empty interfaces in this change.
+ADR 0018 later adds a diagnostic Home Server process and exact device-key
+transport authentication. The foundation still does not provide production
+server operation, server discovery, export/import tooling, signed state
+snapshots, attachment migration, backup automation, Realm policy enforcement,
+or cross-Realm federation. Those require separate milestones and tests rather
+than empty interfaces in this change.
