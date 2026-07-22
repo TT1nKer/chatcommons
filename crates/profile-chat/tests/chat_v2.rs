@@ -1,7 +1,7 @@
 use chatcommons_crypto::Identity;
 use chatcommons_profile_chat::{
-    ChatPayload, InviteCapability, InviteError, MAX_INVITE_PACKAGE_BYTES, RejectionReason,
-    create_chat_event, create_chat_genesis, parse_invite_package, resolve,
+    ChatPayload, HomeServerId, InviteCapability, InviteError, MAX_INVITE_PACKAGE_BYTES,
+    RejectionReason, create_chat_event, create_chat_genesis, parse_invite_package, resolve,
 };
 use chatcommons_protocol::{CommunityId, SignedEvent, community_id};
 
@@ -127,6 +127,191 @@ fn governance_is_a_chat_profile_rule_not_a_core_rule() -> Result<(), Box<dyn std
         resolution.rejected.get(&transfer.event_id),
         Some(&RejectionReason::NotOwner)
     );
+    Ok(())
+}
+
+#[test]
+fn owner_can_replace_home_server_without_changing_community_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let owner = Identity::from_seed([56; 32]);
+    let first_server = Identity::from_seed([57; 32]);
+    let replacement_server = Identity::from_seed([58; 32]);
+    let genesis = create_chat_genesis(&owner, "Portable community", 1)?;
+    let community = community_id(&genesis)?;
+    let first_binding = create_chat_event(
+        &owner,
+        community,
+        vec![genesis.event_id],
+        2,
+        ChatPayload::HomeServerSet {
+            server_public_key: first_server.public_key().to_vec(),
+            endpoints: vec!["https://old.example.test".into()],
+        },
+    )?;
+    let replacement = create_chat_event(
+        &owner,
+        community,
+        vec![first_binding.event_id],
+        3,
+        ChatPayload::HomeServerSet {
+            server_public_key: replacement_server.public_key().to_vec(),
+            endpoints: vec![
+                "/dns4/new.example.test/udp/443/quic-v1".into(),
+                "https://new.example.test".into(),
+            ],
+        },
+    )?;
+
+    let resolution = resolve(&[genesis, first_binding.clone(), replacement.clone()])?;
+    let binding = resolution
+        .snapshot
+        .home_server
+        .expect("owner-authorized binding should resolve");
+    assert_eq!(resolution.snapshot.community, Some(community));
+    assert_eq!(binding.declaration, replacement.event_id);
+    assert_eq!(
+        binding.server_id,
+        HomeServerId::from_public_key(&replacement_server.public_key())
+    );
+    assert_eq!(binding.history_heads, vec![first_binding.event_id]);
+    Ok(())
+}
+
+#[test]
+fn current_server_operator_cannot_redirect_the_community() -> Result<(), Box<dyn std::error::Error>>
+{
+    let owner = Identity::from_seed([71; 32]);
+    let operator = Identity::from_seed([72; 32]);
+    let attacker = Identity::from_seed([73; 32]);
+    let genesis = create_chat_genesis(&owner, "Owner controls hosting", 1)?;
+    let community = community_id(&genesis)?;
+    let initial = create_chat_event(
+        &owner,
+        community,
+        vec![genesis.event_id],
+        2,
+        ChatPayload::HomeServerSet {
+            server_public_key: operator.public_key().to_vec(),
+            endpoints: vec!["https://operator.example.test".into()],
+        },
+    )?;
+    let forged_redirect = create_chat_event(
+        &operator,
+        community,
+        vec![initial.event_id],
+        i64::MAX,
+        ChatPayload::HomeServerSet {
+            server_public_key: attacker.public_key().to_vec(),
+            endpoints: vec!["https://attacker.example.test".into()],
+        },
+    )?;
+
+    let resolution = resolve(&[genesis, initial.clone(), forged_redirect.clone()])?;
+    assert_eq!(
+        resolution.rejected.get(&forged_redirect.event_id),
+        Some(&RejectionReason::NotOwner)
+    );
+    assert_eq!(
+        resolution
+            .snapshot
+            .home_server
+            .map(|binding| binding.declaration),
+        Some(initial.event_id)
+    );
+    Ok(())
+}
+
+#[test]
+fn concurrent_home_server_changes_use_event_ids_not_arrival_order()
+-> Result<(), Box<dyn std::error::Error>> {
+    let owner = Identity::from_seed([74; 32]);
+    let server_a = Identity::from_seed([75; 32]);
+    let server_b = Identity::from_seed([76; 32]);
+    let genesis = create_chat_genesis(&owner, "Deterministic hosting", 1)?;
+    let community = community_id(&genesis)?;
+    let change_a = create_chat_event(
+        &owner,
+        community,
+        vec![genesis.event_id],
+        i64::MAX,
+        ChatPayload::HomeServerSet {
+            server_public_key: server_a.public_key().to_vec(),
+            endpoints: vec!["https://a.example.test".into()],
+        },
+    )?;
+    let change_b = create_chat_event(
+        &owner,
+        community,
+        vec![genesis.event_id],
+        i64::MIN,
+        ChatPayload::HomeServerSet {
+            server_public_key: server_b.public_key().to_vec(),
+            endpoints: vec!["https://b.example.test".into()],
+        },
+    )?;
+    let expected = change_a.event_id.max(change_b.event_id);
+    let forward = resolve(&[genesis.clone(), change_a.clone(), change_b.clone()])?;
+    let reverse = resolve(&[genesis, change_b, change_a])?;
+
+    assert_eq!(forward, reverse);
+    assert_eq!(
+        forward
+            .snapshot
+            .home_server
+            .map(|binding| binding.declaration),
+        Some(expected)
+    );
+    Ok(())
+}
+
+#[test]
+fn malformed_home_server_bindings_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let owner = Identity::from_seed([77; 32]);
+    let server = Identity::from_seed([78; 32]);
+    let genesis = create_chat_genesis(&owner, "Bounded hosting", 1)?;
+    let community = community_id(&genesis)?;
+    let empty = create_chat_event(
+        &owner,
+        community,
+        vec![genesis.event_id],
+        2,
+        ChatPayload::HomeServerSet {
+            server_public_key: server.public_key().to_vec(),
+            endpoints: Vec::new(),
+        },
+    )?;
+    let duplicate = create_chat_event(
+        &owner,
+        community,
+        vec![genesis.event_id],
+        3,
+        ChatPayload::HomeServerSet {
+            server_public_key: server.public_key().to_vec(),
+            endpoints: vec![
+                "https://same.example.test".into(),
+                "https://same.example.test".into(),
+            ],
+        },
+    )?;
+    let bad_key = create_chat_event(
+        &owner,
+        community,
+        vec![genesis.event_id],
+        4,
+        ChatPayload::HomeServerSet {
+            server_public_key: vec![0; 31],
+            endpoints: vec!["https://valid.example.test".into()],
+        },
+    )?;
+    let resolution = resolve(&[genesis, empty.clone(), duplicate.clone(), bad_key.clone()])?;
+
+    for event in [empty, duplicate, bad_key] {
+        assert_eq!(
+            resolution.rejected.get(&event.event_id),
+            Some(&RejectionReason::InvalidHomeServer)
+        );
+    }
+    assert!(resolution.snapshot.home_server.is_none());
     Ok(())
 }
 

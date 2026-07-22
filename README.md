@@ -4,7 +4,8 @@ ChatCommons is an open, offline-first protocol for community-owned chat. Its
 goal is simple: your community, your rules, your chat. The current workspace
 contains protocol v2, one deliberately small reference chat profile, single-use
 bearer invitations, secure invitation bootstrap, direct QUIC synchronization,
-and relay-assisted hole punching. It contains no hosted service, release binary,
+relay-assisted hole punching, and an owner-signed replaceable home-server
+declaration. It contains no production home-server service, release binary,
 voice implementation, or GUI.
 
 ## Workspace
@@ -14,7 +15,7 @@ voice implementation, or GUI.
 - `chatcommons-protocol`: opaque signed envelopes, canonical encoding, parsing and IDs
 - `chatcommons-storage`: idempotent SQLite event persistence
 - `chatcommons-node-core`: generic DAG validation and local ingestion
-- `chatcommons-profile-chat`: the optional `chatcommons.chat.v1` reference semantics
+- `chatcommons-profile-chat`: the optional `chatcommons.chat.v2` reference semantics
 - `chatcommons-sync`: bounded DAG synchronization over direct or relayed connections
 - `chatcommons-relay`: bounded, ephemeral development Circuit Relay v2 node
 

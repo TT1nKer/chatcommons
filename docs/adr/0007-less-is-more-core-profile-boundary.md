@@ -28,10 +28,11 @@ Core derives the author identity from the public key. It has no redundant claime
 author, author sequence, roles, members, bans, owner, administrator, channel, or
 message types.
 
-The workspace includes exactly one small reference profile,
-`chatcommons.chat.v1`. It owns the current chat payload encoding and governance
-projection. Core and storage do not depend on that profile. No generic policy VM,
-plugin interface, or role language is introduced.
+The workspace includes exactly one small reference profile. It owns the current
+chat payload encoding and governance projection. Core and storage do not depend
+on that profile. No generic policy VM, plugin interface, or role language is
+introduced. ADR 0017 later advances this reference profile from
+`chatcommons.chat.v1` to `chatcommons.chat.v2` without expanding Core.
 
 ## Consequences
 

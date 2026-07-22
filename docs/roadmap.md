@@ -7,7 +7,7 @@
 - parsing separated from cryptographic validation
 - idempotent SQLite persistence and recovery
 - unordered parent ingestion and concurrent DAG branches
-- one optional `chatcommons.chat.v1` reference profile
+- one optional reference chat profile, advanced to `chatcommons.chat.v2` in M3a
 
 ## M1.1 — single-use invitation capability (implemented)
 
@@ -114,6 +114,17 @@ convergence over an independently operated IPFS Relay v2 peer. The direct
 candidate timed out and the relay remained the working fallback. The included
 relay still has an ephemeral identity and is not a public-service binary. See
 [`ADR 0016`](adr/0016-relay-assisted-hole-punching.md).
+
+## M3a — replaceable community home-server declaration (implemented)
+
+- one logical default home-server binding per community
+- owner-only signed replacement without old-server or official approval
+- server identity derived independently from the genesis-derived Community ID
+- bounded endpoint hints and DAG-parent history checkpoints
+- deterministic concurrent migration resolution without timestamp precedence
+- no production server, discovery service, backup, attachment or migration tool
+
+See [`ADR 0017`](adr/0017-replaceable-community-home-server.md).
 
 ## Suggested M2f
 
