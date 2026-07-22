@@ -1,12 +1,15 @@
 use chatcommons_cli::NodeState;
 use chatcommons_crypto::UserId;
-use chatcommons_node_core::{CoreNode, NodeError};
+use chatcommons_node_core::{CoreNode, MAX_PENDING_EVENTS, NodeError};
 use chatcommons_profile_chat::{
-    ChatError, ChatPayload, HomeServerId, InviteCapability, InviteError, create_chat_event,
-    create_chat_genesis, parse_invite_package, resolve,
+    ChatError, ChatPayload, HomeServerBinding, HomeServerId, InviteCapability, InviteError,
+    create_chat_event, create_chat_genesis, parse_invite_package, resolve,
 };
 use chatcommons_protocol::{CommunityId, ProtocolError, community_id};
-use chatcommons_storage::{EventStore, StorageError};
+use chatcommons_storage::{
+    EventStore, StorageError,
+    archive::{self, ArchiveError},
+};
 use chatcommons_sync::{
     SyncError, SyncPeer,
     auth::{DeviceId, RevocationSet, create_device_certificate},
@@ -19,14 +22,19 @@ use libp2p::{Multiaddr, PeerId, identity};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env,
-    io::{self, Write},
+    fs::{File, OpenOptions},
+    io::{self, Read, Write},
+    path::Path,
     process::ExitCode,
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
-const USAGE: &str = r#"ChatCommons M2c-M3b diagnostic node
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
+const USAGE: &str = r#"ChatCommons M2c-M3c diagnostic node
 
 Usage:
   chatcommons-node init --state <directory>
@@ -34,6 +42,9 @@ Usage:
   chatcommons-node create-community --state <directory> --name <name>
   chatcommons-node set-home-server --state <directory> --community <hex>
     --server-public-key <hex> --endpoint <multiaddr-or-url> [--endpoint <...> ...]
+  chatcommons-node export-community --state <directory> --community <hex>
+    --output <archive-file>
+  chatcommons-node import-community --state <directory> --input <archive-file>
   chatcommons-node create-invite --state <directory> --community <hex>
     --address <public-multiaddr>
   chatcommons-node join --state <directory> --invite-code <code>
@@ -43,6 +54,9 @@ Usage:
     [--dial-peer <peer-id> --dial-address <multiaddr>] [--exit-after-events <count>]
   chatcommons-node serve-community --state <directory> --community <hex>
     --listen <multiaddr> [--relay-address <relay-base-multiaddr>]
+  chatcommons-node sync-home-server --state <directory> --community <hex>
+    --listen <multiaddr> [--relay-address <relay-base-multiaddr>]
+    [--exit-after-events <count>]
 
 This is a developer tool. Relay-assisted hole punching requires an explicit relay.
 It has no discovery, production relay configuration, or GUI.
@@ -65,6 +79,8 @@ enum CliError {
     State(#[from] chatcommons_cli::StateError),
     #[error("storage failed: {0}")]
     Storage(#[from] StorageError),
+    #[error("community archive failed: {0}")]
+    Archive(#[from] ArchiveError),
     #[error("node failed: {0}")]
     Node(#[from] NodeError),
     #[error("chat profile failed: {0}")]
@@ -95,6 +111,10 @@ enum CliError {
     WrongHomeServerIdentity,
     #[error("Home Server public key is not a valid Ed25519 device key")]
     InvalidHomeServerPublicKey,
+    #[error("Home Server declaration has no supported network endpoint")]
+    UnsupportedHomeServerEndpoint,
+    #[error("community archive could not be fully ingested")]
+    IncompleteArchive,
     #[error("output failed: {0}")]
     Output(#[from] io::Error),
 }
@@ -179,10 +199,17 @@ async fn run() -> Result<(), CliError> {
         "info" => command_info(&options),
         "create-community" => command_create_community(&options),
         "set-home-server" => command_set_home_server(&options),
+        "export-community" => command_export_community(&options),
+        "import-community" => command_import_community(&options),
         "create-invite" => command_create_invite(&options),
         "join" => command_join(&options).await,
-        "run" => command_network(&options, NetworkRole::Peer).await,
-        "serve-community" => command_network(&options, NetworkRole::HomeServer).await,
+        "run" => command_network(&options, NetworkRole::Peer, DialMode::Explicit).await,
+        "serve-community" => {
+            command_network(&options, NetworkRole::HomeServer, DialMode::Explicit).await
+        }
+        "sync-home-server" => {
+            command_network(&options, NetworkRole::Peer, DialMode::HomeServer).await
+        }
         _ => Err(CliError::Arguments(format!("unknown command {command}"))),
     }
 }
@@ -265,6 +292,147 @@ fn command_set_home_server(options: &Options) -> Result<(), CliError> {
     println!("HOME_SERVER_ID={}", hex::encode(server_id.as_bytes()));
     io::stdout().flush()?;
     Ok(())
+}
+
+fn command_export_community(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--community", "--output"])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let store = EventStore::open(state.database_path())?;
+    if store.events(community)?.is_empty() {
+        return Err(CliError::WrongDatabaseCommunity);
+    }
+    let core = CoreNode::open(store, Some(community))?;
+    let bytes = archive::encode(community, core.all_events()?)?;
+    let output = Path::new(options.require_one("--output")?);
+    let mut file = create_private_output(output)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    println!("EXPORTED_COMMUNITY={}", hex::encode(community.as_bytes()));
+    println!("EXPORTED_EVENTS={}", core.event_ids().len());
+    println!("EXPORTED_BYTES={}", bytes.len());
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn command_import_community(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--input"])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let bytes = read_archive_file(Path::new(options.require_one("--input")?))?;
+    let validated = archive::parse(&bytes)?.validate()?;
+    let community = validated.community();
+    let projected = resolve(validated.events())?;
+    if projected.snapshot.community != Some(community) {
+        return Err(CliError::ProfileRejected);
+    }
+    let store = EventStore::open(state.database_path())?;
+    let database_is_empty = store.is_empty()?;
+    if !database_is_empty && store.events(community)?.is_empty() {
+        return Err(CliError::WrongDatabaseCommunity);
+    }
+    let core = CoreNode::open(
+        store,
+        if database_is_empty {
+            None
+        } else {
+            Some(community)
+        },
+    )?;
+    let (_, events) = validated.into_parts();
+    let (inserted, already_present, core) = ingest_archive(core, events)?;
+    let final_projection = resolve(&core.all_events()?)?;
+    if final_projection.snapshot.community != Some(community) {
+        return Err(CliError::ProfileRejected);
+    }
+    println!("IMPORTED_COMMUNITY={}", hex::encode(community.as_bytes()));
+    println!("IMPORTED_EVENTS={inserted}");
+    println!("ALREADY_PRESENT={already_present}");
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn ingest_archive(
+    mut core: CoreNode,
+    events: Vec<chatcommons_protocol::SignedEvent>,
+) -> Result<(usize, usize, CoreNode), CliError> {
+    let already_present = events
+        .iter()
+        .filter(|event| core.event_ids().contains(&event.event_id))
+        .count();
+    let mut pending: BTreeMap<_, _> = events
+        .into_iter()
+        .filter(|event| !core.event_ids().contains(&event.event_id))
+        .map(|event| (event.event_id, event))
+        .collect();
+    let mut remaining_parents = BTreeMap::new();
+    let mut children = BTreeMap::<_, Vec<_>>::new();
+    for (id, event) in &pending {
+        let mut remaining = 0_usize;
+        for parent in &event.content.parents {
+            if pending.contains_key(parent) {
+                remaining += 1;
+                children.entry(*parent).or_default().push(*id);
+            } else if !core.event_ids().contains(parent) {
+                return Err(CliError::IncompleteArchive);
+            }
+        }
+        remaining_parents.insert(*id, remaining);
+    }
+    let mut ready: BTreeSet<_> = remaining_parents
+        .iter()
+        .filter(|(_, count)| **count == 0)
+        .map(|(id, _)| *id)
+        .collect();
+    let mut topological = Vec::with_capacity(pending.len());
+    while let Some(id) = ready.pop_first() {
+        topological.push(id);
+        for child in children.remove(&id).unwrap_or_default() {
+            let count = remaining_parents
+                .get_mut(&child)
+                .ok_or(CliError::IncompleteArchive)?;
+            *count = (*count).checked_sub(1).ok_or(CliError::IncompleteArchive)?;
+            if *count == 0 {
+                ready.insert(child);
+            }
+        }
+    }
+    if topological.len() != pending.len() {
+        return Err(CliError::IncompleteArchive);
+    }
+    let mut inserted = 0;
+    for ids in topological.chunks(MAX_PENDING_EVENTS) {
+        let mut batch = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(event) = pending.remove(id) {
+                batch.push(event);
+            }
+        }
+        let report = core.ingest(batch)?;
+        if !report.unresolved.is_empty() {
+            return Err(CliError::IncompleteArchive);
+        }
+        inserted += report.inserted;
+    }
+    Ok((inserted, already_present, core))
+}
+
+fn read_archive_file(path: &Path) -> Result<Vec<u8>, CliError> {
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take((archive::MAX_ARCHIVE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > archive::MAX_ARCHIVE_BYTES {
+        return Err(CliError::Archive(ArchiveError::TooLarge));
+    }
+    Ok(bytes)
+}
+
+fn create_private_output(path: &Path) -> Result<File, CliError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    Ok(options.open(path)?)
 }
 
 fn command_create_invite(options: &Options) -> Result<(), CliError> {
@@ -454,9 +622,19 @@ enum NetworkRole {
     HomeServer,
 }
 
-async fn command_network(options: &Options, role: NetworkRole) -> Result<(), CliError> {
-    match role {
-        NetworkRole::Peer => options.allow_only(&[
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DialMode {
+    Explicit,
+    HomeServer,
+}
+
+async fn command_network(
+    options: &Options,
+    role: NetworkRole,
+    dial_mode: DialMode,
+) -> Result<(), CliError> {
+    match (role, dial_mode) {
+        (NetworkRole::Peer, DialMode::Explicit) => options.allow_only(&[
             "--state",
             "--community",
             "--listen",
@@ -466,8 +644,20 @@ async fn command_network(options: &Options, role: NetworkRole) -> Result<(), Cli
             "--dial-address",
             "--exit-after-events",
         ])?,
-        NetworkRole::HomeServer => {
+        (NetworkRole::Peer, DialMode::HomeServer) => options.allow_only(&[
+            "--state",
+            "--community",
+            "--listen",
+            "--relay-address",
+            "--exit-after-events",
+        ])?,
+        (NetworkRole::HomeServer, DialMode::Explicit) => {
             options.allow_only(&["--state", "--community", "--listen", "--relay-address"])?
+        }
+        (NetworkRole::HomeServer, DialMode::HomeServer) => {
+            return Err(CliError::Arguments(
+                "Home Server role cannot dial itself".into(),
+            ));
         }
     }
     let state = NodeState::load(options.require_one("--state")?)?;
@@ -478,7 +668,11 @@ async fn command_network(options: &Options, role: NetworkRole) -> Result<(), Cli
         .map(parse_multiaddr)
         .transpose()?;
     let explicit_allowed_users = parse_allowed_users(options.many("--allow-user"))?;
-    let dial = parse_dial(options)?;
+    let explicit_dial = if dial_mode == DialMode::Explicit {
+        parse_dial(options)?
+    } else {
+        None
+    };
     let exit_after_events = options
         .optional_one("--exit-after-events")?
         .map(parse_positive_usize)
@@ -510,6 +704,12 @@ async fn command_network(options: &Options, role: NetworkRole) -> Result<(), Cli
             CliError::MissingHomeServer
         });
     }
+    let dial = match dial_mode {
+        DialMode::Explicit => explicit_dial,
+        DialMode::HomeServer => Some(home_server_target(
+            home_server.as_ref().ok_or(CliError::MissingHomeServer)?,
+        )?),
+    };
     let mut allowed_users = explicit_allowed_users.clone();
     allowed_users.extend(profile.snapshot.members.iter().copied());
     let mut bootstrap_grants = Vec::new();
@@ -747,6 +947,18 @@ fn parse_dial(options: &Options) -> Result<Option<(PeerId, Multiaddr)>, CliError
     }
 }
 
+fn home_server_target(binding: &HomeServerBinding) -> Result<(PeerId, Multiaddr), CliError> {
+    let public_key = identity::ed25519::PublicKey::try_from_bytes(&binding.server_public_key)
+        .map_err(|_| CliError::InvalidHomeServerPublicKey)?;
+    let peer = identity::PublicKey::from(public_key).to_peer_id();
+    let address = binding
+        .endpoints
+        .iter()
+        .find_map(|endpoint| Multiaddr::from_str(endpoint).ok())
+        .ok_or(CliError::UnsupportedHomeServerEndpoint)?;
+    Ok((peer, address))
+}
+
 fn parse_positive_usize(value: &str) -> Result<usize, CliError> {
     let parsed = value
         .parse::<usize>()
@@ -764,4 +976,48 @@ fn now_ms() -> Result<i64, CliError> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| CliError::InvalidSystemTime)?;
     i64::try_from(duration.as_millis()).map_err(|_| CliError::InvalidSystemTime)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chatcommons_crypto::Identity;
+    use chatcommons_protocol::{EventContent, PROTOCOL_VERSION, create_genesis, create_signed};
+
+    #[test]
+    fn archive_ingest_batches_a_chain_larger_than_the_node_limit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let identity = Identity::from_seed([91; 32]);
+        let genesis = create_genesis(&identity, "batch.genesis", Vec::new(), 1);
+        let community = community_id(&genesis)?;
+        let mut events = vec![genesis.clone()];
+        let mut parent = genesis.event_id;
+        for timestamp_ms in 2..=(MAX_PENDING_EVENTS as i64 + 2) {
+            let event = create_signed(
+                EventContent {
+                    protocol_version: PROTOCOL_VERSION,
+                    community_id: Some(community),
+                    parents: vec![parent],
+                    timestamp_ms,
+                    event_type: "batch.event".into(),
+                    payload: Vec::new(),
+                },
+                &identity,
+            );
+            parent = event.event_id;
+            events.push(event);
+        }
+        events.reverse();
+        let temporary = tempfile::tempdir()?;
+        let core = CoreNode::open(
+            EventStore::open(temporary.path().join("events.sqlite3"))?,
+            None,
+        )?;
+        let expected = events.len();
+        let (inserted, already_present, core) = ingest_archive(core, events)?;
+        assert_eq!(inserted, expected);
+        assert_eq!(already_present, 0);
+        assert_eq!(core.event_ids().len(), expected);
+        Ok(())
+    }
 }

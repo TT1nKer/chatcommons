@@ -138,6 +138,18 @@ See [`ADR 0017`](adr/0017-replaceable-community-home-server.md).
 
 See [`ADR 0018`](adr/0018-minimal-community-home-server.md).
 
+## M3c — portable provisioning and declared dialing (implemented locally)
+
+- bounded deterministic Community Archive v1 with parent-closure validation
+- idempotent export/import without identity or device secrets
+- topologically batched SQLite import under existing ingestion limits
+- automatic Peer ID and Multiaddr selection from signed Home Server state
+- real export/import/serve/offline-member integration coverage
+- no encrypted, incremental or attachment backup; no scheduler or object store
+
+See
+[`ADR 0019`](adr/0019-bounded-community-archives-and-declared-dialing.md).
+
 ## Suggested M2f
 
 Repeat M2e across a small NAT/firewall matrix, record direct-upgrade latency,

@@ -11,7 +11,7 @@ production hosted service, release binary, voice implementation, or GUI.
 ## Workspace
 
 - `chatcommons-crypto`: Ed25519 identities and byte-level verification
-- `chatcommons-cli`: Unix-only M2c-M3b diagnostic executables
+- `chatcommons-cli`: Unix-only M2c-M3c diagnostic executables
 - `chatcommons-protocol`: opaque signed envelopes, canonical encoding, parsing and IDs
 - `chatcommons-storage`: idempotent SQLite event persistence
 - `chatcommons-node-core`: generic DAG validation and local ingestion
@@ -19,7 +19,7 @@ production hosted service, release binary, voice implementation, or GUI.
 - `chatcommons-sync`: bounded DAG synchronization over direct or relayed connections
 - `chatcommons-relay`: bounded, ephemeral development Circuit Relay v2 node
 
-## M2c-M3b diagnostic node
+## M2c-M3c diagnostic node
 
 The current executable is a developer connectivity tool, not an end-user client.
 It persists plaintext development keys only on Unix, with a `0700` state
@@ -94,22 +94,27 @@ cargo run --bin chatcommons-node -- set-home-server \
   --endpoint /ip4/<server-ip>/udp/4001/quic-v1
 ```
 
-Seed the new server database once through the existing authenticated sync path.
-Run the owner node at a reachable address, then let the server state dial it with
-the owner explicitly allowed during provisioning:
+Export the locally known, parent-closed signed community DAG, transfer the file
+through an operator-controlled channel, and import it into the separately
+initialized server state:
 
 ```sh
-cargo run --bin chatcommons-node -- run \
-  --state <server-directory> \
+cargo run --bin chatcommons-node -- export-community \
+  --state <owner-directory> \
   --community <community-id> \
-  --listen /ip4/0.0.0.0/udp/4001/quic-v1 \
-  --allow-user <owner-user-id> \
-  --dial-peer <owner-peer-id> \
-  --dial-address <owner-multiaddr>
+  --output <community.ccarchive>
+
+cargo run --bin chatcommons-node -- import-community \
+  --state <server-directory> \
+  --input <community.ccarchive>
 ```
 
-After synchronization, stop that provisioning process and start the persistent
-role without the temporary allowlist:
+The archive contains signed community events in plaintext but no user or server
+identity seeds. The CLI creates it as a new `0600` file on Unix and refuses to
+overwrite an existing path. Protect and remove operational copies according to
+your own retention policy.
+
+Start the persistent role:
 
 ```sh
 cargo run --bin chatcommons-node -- serve-community \
@@ -118,13 +123,24 @@ cargo run --bin chatcommons-node -- serve-community \
   --listen /ip4/0.0.0.0/udp/4001/quic-v1
 ```
 
+A member whose database already contains the signed declaration can derive the
+server Peer ID and select its declared Multiaddr automatically:
+
+```sh
+cargo run --bin chatcommons-node -- sync-home-server \
+  --state <member-directory> \
+  --community <community-id> \
+  --listen /ip4/0.0.0.0/udp/0/quic-v1
+```
+
 Clients that know the declaration authenticate this exact server device without
 making its operator a community member. The server accepts current members,
 persists signed events in SQLite, and serves them when other members later come
 online. The current CLI has no production provisioning, quotas, backup,
 monitoring, process lock, endpoint discovery, or attachment storage; do not
 expose it as a public service. See
-[ADR 0018](docs/adr/0018-minimal-community-home-server.md).
+[ADR 0018](docs/adr/0018-minimal-community-home-server.md) and
+[ADR 0019](docs/adr/0019-bounded-community-archives-and-declared-dialing.md).
 
 The fallback path has also completed a physical cross-NAT measurement between a
 macOS hotspot client and Windows/WSL on a separate home connection. The direct

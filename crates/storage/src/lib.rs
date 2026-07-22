@@ -1,3 +1,5 @@
+pub mod archive;
+
 use chatcommons_protocol::{CommunityId, EventId, SignedEvent, validate_event};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;

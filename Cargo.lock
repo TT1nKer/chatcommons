@@ -415,9 +415,12 @@ dependencies = [
 name = "chatcommons-storage"
 version = "0.1.0"
 dependencies = [
+ "chatcommons-crypto",
  "chatcommons-protocol",
  "rusqlite",
+ "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 

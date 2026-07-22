@@ -51,9 +51,10 @@ serve-community      -> verifies the local key and serves the community
 ```
 
 Before `serve-community` can start, its SQLite database must already contain the
-genesis, governance ancestry, and current declaration. For now an operator can
-seed it through the existing authenticated `run` synchronization path. Automated
-export/import and backup remain separate work.
+genesis, governance ancestry, and current declaration. At this milestone an
+operator could seed it through the existing authenticated `run` synchronization
+path. ADR 0019 later adds bounded manual export/import, while automated backup
+remains deferred.
 
 ## Consequences
 

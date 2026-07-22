@@ -97,6 +97,17 @@ A signed Core event whose chat payload is malformed or mismatched is retained as
 a candidate but receives the deterministic `InvalidPayload` profile rejection.
 Its failure does not erase the valid projection or make a network node exit.
 
+## Portable community archive
+
+The diagnostic archive is a bounded, deterministic operational container for a
+parent-closed signed Core DAG. It requires one matching genesis, strictly sorted
+and unique events, correct community attribution, and no missing parents. It
+cannot prove that an exporter omitted no independent branch. The outer file
+grants no authority and contains no identity keys; every event is verified
+normally before import. `sync-home-server` derives both Peer ID and address from
+the accepted Home Server binding. See
+[`ADR 0019`](adr/0019-bounded-community-archives-and-declared-dialing.md).
+
 ## Resource limits
 
 Protocol v2 rejects JSON envelopes above 256 KiB, more than 32 parents, event types

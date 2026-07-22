@@ -11,6 +11,7 @@ use libp2p::identity;
 use std::{
     io::{BufRead, BufReader, Read},
     net::UdpSocket,
+    os::unix::fs::PermissionsExt,
     path::Path,
     process::{Child, Command, Output, Stdio},
     sync::mpsc,
@@ -256,8 +257,63 @@ fn declared_home_server_relays_events_between_offline_members()
     let profile = resolve(&shared_history)?;
     assert!(profile.snapshot.members.contains(&member.user().user_id()));
     seed_node(&member_path, community, shared_history.clone())?;
-    seed_node(&server_path, community, shared_history.clone())?;
-    seed_node(&imposter_path, community, shared_history)?;
+    let archive_path = temporary.path().join("community.ccarchive");
+    let archive_text = archive_path.to_string_lossy().into_owned();
+    let exported = run_command(&[
+        "export-community",
+        "--state",
+        &owner_text,
+        "--community",
+        &community_text,
+        "--output",
+        &archive_text,
+    ])?;
+    require_success(&exported)?;
+    assert_eq!(
+        std::fs::metadata(&archive_path)?.permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        field(&exported, "EXPORTED_EVENTS")?,
+        shared_count.to_string()
+    );
+    let overwrite = run_command(&[
+        "export-community",
+        "--state",
+        &owner_text,
+        "--community",
+        &community_text,
+        "--output",
+        &archive_text,
+    ])?;
+    assert!(!overwrite.status.success());
+    for state in [&server_text, &imposter_text] {
+        let imported = run_command(&[
+            "import-community",
+            "--state",
+            state,
+            "--input",
+            &archive_text,
+        ])?;
+        require_success(&imported)?;
+        assert_eq!(
+            field(&imported, "IMPORTED_EVENTS")?,
+            shared_count.to_string()
+        );
+    }
+    let repeated_import = run_command(&[
+        "import-community",
+        "--state",
+        &server_text,
+        "--input",
+        &archive_text,
+    ])?;
+    require_success(&repeated_import)?;
+    assert_eq!(field(&repeated_import, "IMPORTED_EVENTS")?, "0");
+    assert_eq!(
+        field(&repeated_import, "ALREADY_PRESENT")?,
+        shared_count.to_string()
+    );
 
     let wrong_server = run_command(&[
         "serve-community",
@@ -327,32 +383,24 @@ fn declared_home_server_relays_events_between_offline_members()
     member_node.ingest(vec![message.clone()])?;
     let expected_count = shared_count + 1;
 
-    let (mut server, server_address) = RunningNode::spawn(&[
+    let (mut server, _) = RunningNode::spawn(&[
         "serve-community",
         "--state",
         &server_text,
         "--community",
         &community_text,
         "--listen",
-        &available_address()?,
+        &declared_endpoint,
     ])?;
-    let server_peer = NodeState::load(&server_path)?
-        .device()
-        .peer_id()
-        .to_string();
     let mut uploader = Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
         .args([
-            "run",
+            "sync-home-server",
             "--state",
             &member_text,
             "--community",
             &community_text,
             "--listen",
             "/ip4/127.0.0.1/udp/0/quic-v1",
-            "--dial-peer",
-            &server_peer,
-            "--dial-address",
-            &server_address,
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -376,17 +424,13 @@ fn declared_home_server_relays_events_between_offline_members()
 
     let mut downloader = Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
         .args([
-            "run",
+            "sync-home-server",
             "--state",
             &owner_text,
             "--community",
             &community_text,
             "--listen",
             "/ip4/127.0.0.1/udp/0/quic-v1",
-            "--dial-peer",
-            &server_peer,
-            "--dial-address",
-            &server_address,
             "--exit-after-events",
             &expected_count.to_string(),
         ])
