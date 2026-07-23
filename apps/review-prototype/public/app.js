@@ -199,17 +199,17 @@
       <div class="about-flow">
         <div class="about-step"><span>01</span><div><strong>社区选择由谁托管</strong><small>正常情况下，社区主服务器保存历史、接收消息并帮助成员连接。服务器短暂离线时，已在线成员可以临时直接同步；服务器恢复后再合并签名事件。</small></div></div>
         <div class="about-step"><span>02</span><div><strong>我们已经完成</strong><small>签名身份与事件、本地 SQLite 历史、单人邀请、QUIC 同步、可替换主服务器及备份恢复。</small></div></div>
-        <div class="about-step"><span>03</span><div><strong>接下来要做</strong><small>把协议内核接入真正的桌面客户端，在永久测试社区里验证邀请、聊天和服务器迁移。</small></div></div>
+        <div class="about-step"><span>03</span><div><strong>现在可以测试</strong><small>原生桌面 alpha 已接入协议内核，可以创建本机身份、用单人邀请加入永久测试社区并发送真实签名消息。</small></div></div>
       </div>
-      <div class="panel-links"><a href="https://github.com/TT1nKer/chatcommons" target="_blank" rel="noopener noreferrer">查看源代码</a><button class="secondary-action" type="button" data-copy-brief>复制项目简介</button></div>
+      <div class="panel-links"><a href="https://github.com/TT1nKer/chatcommons/releases/tag/v0.1.0-alpha.1" target="_blank" rel="noopener noreferrer">下载桌面测试版</a><a href="https://github.com/TT1nKer/chatcommons" target="_blank" rel="noopener noreferrer">查看源代码</a><button class="secondary-action" type="button" data-copy-brief>复制项目简介</button></div>
     </section>`);
     $('[data-copy-brief]', $('#side-panel')).onclick = copyProjectBrief;
   }
 
   async function copyProjectBrief() {
     const brief = l(
-      'ChatCommons 是一个开源社区聊天应用，目标是提供熟悉、顺畅的社区体验，同时避免所有社区被同一个平台锁住。每个社区选择自己的长期在线主服务器；以后可以迁移服务器，而不必重建身份、成员关系和整个社区。成员身份和事件由签名验证，服务器短暂离线时，已在线成员可以临时直接同步。当前已经完成协议内核、邀请、QUIC 同步、可替换主服务器和备份恢复，网页仍是交互原型，下一步是接入真正的桌面客户端。\n\nhttps://ttinker.net/chatcommons/',
-      'ChatCommons is an open-source community chat app designed to feel familiar without locking every community into one platform. Each community chooses a long-running home server and can move later without rebuilding identities, membership, or the community itself. Signed identities and events are verified by clients, while online members can temporarily sync directly during a short server outage. The protocol core, invites, QUIC sync, replaceable home server, and backup recovery are implemented; the website is still an interactive prototype, and the next step is a real desktop client.\n\nhttps://ttinker.net/chatcommons/'
+      'ChatCommons 是一个开源社区聊天应用，目标是提供熟悉、顺畅的社区体验，同时避免所有社区被同一个平台锁住。每个社区选择自己的长期在线主服务器；以后可以迁移服务器，而不必重建身份、成员关系和整个社区。成员身份和事件由签名验证，服务器短暂离线时，已在线成员可以临时直接同步。协议内核、单人邀请、QUIC 同步、可替换主服务器、备份恢复和第一版原生桌面客户端已经实现，正在进行朋友 alpha 测试。\n\nhttps://ttinker.net/chatcommons/',
+      'ChatCommons is an open-source community chat app designed to feel familiar without locking every community into one platform. Each community chooses a long-running home server and can move later without rebuilding identities, membership, or the community itself. Signed identities and events are verified by clients, while online members can temporarily sync directly during a short server outage. The protocol core, single-person invites, QUIC sync, replaceable home server, backup recovery, and the first native desktop client are implemented and entering friends-alpha testing.\n\nhttps://ttinker.net/chatcommons/'
     );
     try {
       await navigator.clipboard.writeText(brief);
