@@ -12,6 +12,8 @@
     'ChatCommons 是一个开源社区聊天应用。每个社区选择自己的长期在线主服务器；以后可以更换服务器，而不必重建身份、成员关系和整个社区。': 'ChatCommons is an open-source community chat app. Each community chooses its long-running home server and can move later without rebuilding identities, membership, or the community itself.',
     '了解它如何工作': 'See how it works',
     '下载桌面测试版': 'Download desktop alpha',
+    '当前仅开放朋友内测': 'Currently open to invited friends only',
+    '测试资格通过邀请的评审链接发放。已受邀的朋友可以直接下载 macOS 或 Windows 客户端。': 'Alpha access is shared through invited review links. Invited friends can download the macOS or Windows client directly.',
     '复制项目简介': 'Copy project brief',
     '项目原则': 'Project principles',
     '像普通群聊一样使用': 'Use it like an ordinary group chat',

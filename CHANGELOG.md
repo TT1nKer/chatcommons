@@ -6,6 +6,11 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+### Changed
+
+- Moved the invited-alpha desktop download entry into a prominent bilingual
+  banner while keeping access limited to authorized review links.
+
 ## [0.1.0-alpha.2] - 2026-07-23
 
 ### Added
