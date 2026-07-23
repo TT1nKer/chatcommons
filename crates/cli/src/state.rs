@@ -20,7 +20,7 @@ const MAX_IDENTITY_BYTES: u64 = 4 * 1024;
 
 #[derive(Debug, Error)]
 pub enum StateError {
-    #[error("state persistence is supported only where Unix file permissions are available")]
+    #[error("state persistence is not supported on this platform")]
     UnsupportedPermissions,
     #[error("state path must not be a symbolic link")]
     SymbolicLink,
@@ -213,7 +213,7 @@ fn require_supported_permissions() -> Result<(), StateError> {
 
 #[cfg(not(unix))]
 fn require_supported_permissions() -> Result<(), StateError> {
-    Err(StateError::UnsupportedPermissions)
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -240,8 +240,16 @@ fn prepare_directory(directory: &Path) -> Result<(), StateError> {
 }
 
 #[cfg(not(unix))]
-fn prepare_directory(_directory: &Path) -> Result<(), StateError> {
-    Err(StateError::UnsupportedPermissions)
+fn prepare_directory(directory: &Path) -> Result<(), StateError> {
+    match fs::symlink_metadata(directory) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(()),
+        Ok(_) => Err(StateError::SymbolicLink),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(directory)?;
+            Ok(())
+        }
+        Err(error) => Err(StateError::Io(error)),
+    }
 }
 
 fn validate_directory(directory: &Path) -> Result<(), StateError> {
@@ -269,7 +277,9 @@ fn validate_private_mode(metadata: &fs::Metadata) -> Result<(), StateError> {
 
 #[cfg(not(unix))]
 fn validate_private_mode(_metadata: &fs::Metadata) -> Result<(), StateError> {
-    Err(StateError::UnsupportedPermissions)
+    // Windows application-data directories inherit the current user's ACL.
+    // The friends alpha does not claim protection from local administrators.
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -289,6 +299,16 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), StateError> {
 }
 
 #[cfg(not(unix))]
-fn write_private_file(_path: &Path, _bytes: &[u8]) -> Result<(), StateError> {
-    Err(StateError::UnsupportedPermissions)
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), StateError> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::AlreadyExists => StateError::AlreadyInitialized,
+            _ => StateError::Io(error),
+        })?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
 }

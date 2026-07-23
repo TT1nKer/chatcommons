@@ -461,6 +461,50 @@ fn declared_home_server_relays_events_between_offline_members()
             .get(EventId::from_bytes(*message.event_id.as_bytes()))?
             .is_some()
     );
+
+    let newcomer_path = temporary.path().join("newcomer");
+    let newcomer_text = newcomer_path.to_string_lossy().into_owned();
+    require_success(&run_command(&["init", "--state", &newcomer_text])?)?;
+    let invite = run_command(&[
+        "create-invite",
+        "--state",
+        &owner_text,
+        "--community",
+        &community_text,
+    ])?;
+    require_success(&invite)?;
+    let invite_code = field(&invite, "INVITE_CODE")?;
+    let uploaded_invite = run_command(&[
+        "sync-home-server",
+        "--state",
+        &owner_text,
+        "--community",
+        &community_text,
+        "--listen",
+        "/ip4/127.0.0.1/udp/0/quic-v1",
+        "--idle-timeout-ms",
+        "500",
+    ])?;
+    require_success(&uploaded_invite)?;
+    assert!(String::from_utf8_lossy(&uploaded_invite.stdout).contains("SYNC_COMPLETE"));
+
+    let joined = run_command(&[
+        "join",
+        "--state",
+        &newcomer_text,
+        "--invite-code",
+        &invite_code,
+    ])?;
+    require_success(&joined)?;
+    assert!(String::from_utf8_lossy(&joined.stdout).contains("JOIN_COMPLETE"));
+    let newcomer = NodeState::load(&newcomer_path)?;
+    let newcomer_events = EventStore::open(newcomer.database_path())?.events(community)?;
+    assert!(
+        resolve(&newcomer_events)?
+            .snapshot
+            .members
+            .contains(&newcomer.user().user_id())
+    );
     assert!(!server.has_exited()?);
     Ok(())
 }

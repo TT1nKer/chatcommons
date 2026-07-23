@@ -1,13 +1,19 @@
 # ChatCommons
 
+Current product version: `0.1.0-alpha.1` (friends-and-contributors alpha).
+Product releases, wire protocol versions, storage schema versions, and server
+deployment revisions are versioned independently. See
+[docs/versioning.md](docs/versioning.md).
+
 ChatCommons is an open, offline-first protocol for community-owned chat. Its
 goal is simple: your community, your rules, your chat. The current workspace
 contains protocol v2, one deliberately small reference chat profile, single-use
 bearer invitations, secure invitation bootstrap, direct QUIC synchronization,
 relay-assisted hole punching, and an owner-signed replaceable home-server
-declaration with a bounded diagnostic authenticated Home Server process. It
-contains no production hosted service, release binary, voice implementation, or
-GUI.
+declaration with a bounded diagnostic authenticated Home Server process. The
+workspace now also contains a minimal native friends-alpha text client. It
+contains no production hosted service, trusted release binary, voice
+implementation, account recovery or multi-device identity.
 
 ## Workspace
 
@@ -19,6 +25,7 @@ GUI.
 - `chatcommons-profile-chat`: the optional `chatcommons.chat.v2` reference semantics
 - `chatcommons-sync`: bounded DAG synchronization over direct or relayed connections
 - `chatcommons-relay`: bounded, ephemeral development Circuit Relay v2 node
+- `apps/desktop`: minimal Chinese/English friends-alpha desktop client
 
 ## M2c-M3d diagnostic node
 

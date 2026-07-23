@@ -3,7 +3,7 @@ use chatcommons_crypto::UserId;
 use chatcommons_node_core::{CoreNode, MAX_PENDING_EVENTS, NodeError};
 use chatcommons_profile_chat::{
     ChatError, ChatPayload, HomeServerBinding, HomeServerId, InviteCapability, InviteError,
-    create_chat_event, create_chat_genesis, parse_invite_package, resolve,
+    create_chat_event, create_chat_genesis, decode, parse_invite_package, resolve,
 };
 use chatcommons_protocol::{CommunityId, ProtocolError, community_id};
 use chatcommons_storage::{
@@ -19,6 +19,8 @@ use chatcommons_sync::{
     },
 };
 use libp2p::{Multiaddr, PeerId, identity};
+use rand_core::{OsRng, RngCore};
+use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     env,
@@ -27,7 +29,7 @@ use std::{
     path::Path,
     process::ExitCode,
     str::FromStr,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
@@ -40,13 +42,19 @@ Usage:
   chatcommons-node init --state <directory>
   chatcommons-node info --state <directory>
   chatcommons-node create-community --state <directory> --name <name>
+  chatcommons-node create-channel --state <directory> --community <hex> --name <name>
+  chatcommons-node list-channels --state <directory> --community <hex>
+  chatcommons-node send-message --state <directory> --community <hex>
+    --channel <hex> --text <message>
+  chatcommons-node list-messages --state <directory> --community <hex>
+    [--channel <hex>]
   chatcommons-node set-home-server --state <directory> --community <hex>
     --server-public-key <hex> --endpoint <multiaddr-or-url> [--endpoint <...> ...]
   chatcommons-node export-community --state <directory> --community <hex>
     --output <archive-file>
   chatcommons-node import-community --state <directory> --input <archive-file>
   chatcommons-node create-invite --state <directory> --community <hex>
-    --address <public-multiaddr>
+    [--address <public-multiaddr>]
   chatcommons-node join --state <directory> --invite-code <code>
   chatcommons-node run --state <directory> --community <hex>
     --listen <multiaddr> [--allow-user <user-id-hex> ...]
@@ -57,13 +65,15 @@ Usage:
     [--max-store-bytes <bytes>]
   chatcommons-node sync-home-server --state <directory> --community <hex>
     --listen <multiaddr> [--relay-address <relay-base-multiaddr>]
-    [--exit-after-events <count>]
+    [--exit-after-events <count>] [--idle-timeout-ms <milliseconds>]
 
 This is a developer tool. Relay-assisted hole punching requires an explicit relay.
 It has no discovery, production relay configuration, or GUI.
 "#;
 const MAX_ALLOWED_USERS: usize = 256;
 const DEFAULT_HOME_SERVER_STORE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_CHANNEL_NAME_BYTES: usize = 80;
+const MAX_MESSAGE_BYTES: usize = 4_000;
 
 #[derive(Debug, Error)]
 enum CliError {
@@ -81,6 +91,8 @@ enum CliError {
     State(#[from] chatcommons_cli::StateError),
     #[error("storage failed: {0}")]
     Storage(#[from] StorageError),
+    #[error("JSON encoding failed: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("community archive failed: {0}")]
     Archive(#[from] ArchiveError),
     #[error("node failed: {0}")]
@@ -200,6 +212,10 @@ async fn run() -> Result<(), CliError> {
         "init" => command_init(&options),
         "info" => command_info(&options),
         "create-community" => command_create_community(&options),
+        "create-channel" => command_create_channel(&options),
+        "list-channels" => command_list_channels(&options),
+        "send-message" => command_send_message(&options),
+        "list-messages" => command_list_messages(&options),
         "set-home-server" => command_set_home_server(&options),
         "export-community" => command_export_community(&options),
         "import-community" => command_import_community(&options),
@@ -242,6 +258,173 @@ fn command_create_community(options: &Options) -> Result<(), CliError> {
     node.ingest(vec![genesis])?;
     println!("COMMUNITY_ID={}", hex::encode(community.as_bytes()));
     Ok(())
+}
+
+fn command_create_channel(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--community", "--name"])?;
+    let name = options.require_one("--name")?.trim();
+    if name.is_empty() || name.len() > MAX_CHANNEL_NAME_BYTES {
+        return Err(CliError::Arguments(format!(
+            "channel name must contain 1 to {MAX_CHANNEL_NAME_BYTES} UTF-8 bytes"
+        )));
+    }
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let mut core = open_community(&state, community)?;
+    let mut channel_id = [0_u8; 32];
+    OsRng.fill_bytes(&mut channel_id);
+    let event = create_chat_event(
+        state.user(),
+        community,
+        core.heads()?,
+        now_ms()?,
+        ChatPayload::ChannelCreate {
+            channel_id,
+            name: name.into(),
+        },
+    )?;
+    require_candidate_accepted(&core, &event)?;
+    core.ingest(vec![event.clone()])?;
+    println!("CHANNEL_ID={}", hex::encode(channel_id));
+    println!(
+        "CHANNEL_EVENT_ID={}",
+        hex::encode(event.event_id.as_bytes())
+    );
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn command_send_message(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--community", "--channel", "--text"])?;
+    let text = options.require_one("--text")?.trim();
+    if text.is_empty() || text.len() > MAX_MESSAGE_BYTES {
+        return Err(CliError::Arguments(format!(
+            "message must contain 1 to {MAX_MESSAGE_BYTES} UTF-8 bytes"
+        )));
+    }
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let channel_id = parse_hex_32(options.require_one("--channel")?)?;
+    let mut core = open_community(&state, community)?;
+    let event = create_chat_event(
+        state.user(),
+        community,
+        core.heads()?,
+        now_ms()?,
+        ChatPayload::MessageCreate {
+            channel_id,
+            text: text.into(),
+        },
+    )?;
+    require_candidate_accepted(&core, &event)?;
+    core.ingest(vec![event.clone()])?;
+    println!(
+        "MESSAGE_EVENT_ID={}",
+        hex::encode(event.event_id.as_bytes())
+    );
+    io::stdout().flush()?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChannelView {
+    channel_id: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MessageView {
+    event_id: String,
+    channel_id: String,
+    author_id: String,
+    timestamp_ms: i64,
+    text: String,
+}
+
+fn command_list_channels(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--community"])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let core = open_community(&state, community)?;
+    let events = core.all_events()?;
+    let resolution = resolve(&events)?;
+    let accepted = resolution.snapshot.event_ids;
+    let channels: Vec<ChannelView> = events
+        .iter()
+        .filter(|event| accepted.contains(&event.event_id))
+        .filter_map(|event| match decode(event) {
+            Ok(ChatPayload::ChannelCreate { channel_id, name }) => Some(ChannelView {
+                channel_id: hex::encode(channel_id),
+                name,
+            }),
+            _ => None,
+        })
+        .collect();
+    println!("{}", serde_json::to_string(&channels)?);
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn command_list_messages(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--community", "--channel"])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let selected_channel = options
+        .optional_one("--channel")?
+        .map(parse_hex_32)
+        .transpose()?;
+    let core = open_community(&state, community)?;
+    let events = core.all_events()?;
+    let resolution = resolve(&events)?;
+    let by_id: BTreeMap<_, _> = events.iter().map(|event| (event.event_id, event)).collect();
+    let mut messages = Vec::new();
+    for event_id in resolution.accepted_in_order {
+        let event = by_id.get(&event_id).ok_or(CliError::ProfileRejected)?;
+        if let ChatPayload::MessageCreate { channel_id, text } = decode(event)? {
+            if selected_channel.is_some_and(|selected| selected != channel_id) {
+                continue;
+            }
+            messages.push(MessageView {
+                event_id: hex::encode(event.event_id.as_bytes()),
+                channel_id: hex::encode(channel_id),
+                author_id: hex::encode(chatcommons_protocol::author_id(event)?.as_bytes()),
+                timestamp_ms: event.content.timestamp_ms,
+                text,
+            });
+        }
+    }
+    println!("{}", serde_json::to_string(&messages)?);
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn open_community(state: &NodeState, community: CommunityId) -> Result<CoreNode, CliError> {
+    let store = EventStore::open(state.database_path())?;
+    if store.events(community)?.is_empty() {
+        return Err(CliError::WrongDatabaseCommunity);
+    }
+    Ok(CoreNode::open(store, Some(community))?)
+}
+
+fn require_candidate_accepted(
+    core: &CoreNode,
+    candidate: &chatcommons_protocol::SignedEvent,
+) -> Result<(), CliError> {
+    let mut candidates = core.all_events()?;
+    candidates.push(candidate.clone());
+    if resolve(&candidates)?
+        .snapshot
+        .event_ids
+        .contains(&candidate.event_id)
+    {
+        Ok(())
+    } else {
+        Err(CliError::ProfileRejected)
+    }
 }
 
 fn command_set_home_server(options: &Options) -> Result<(), CliError> {
@@ -446,10 +629,22 @@ fn command_create_invite(options: &Options) -> Result<(), CliError> {
     let state = NodeState::load(options.require_one("--state")?)?;
     let _lock = state.acquire_lock()?;
     let community = parse_community(options.require_one("--community")?)?;
-    let address = parse_multiaddr(options.require_one("--address")?)?;
     let store = EventStore::open(state.database_path())?;
     let mut core = CoreNode::open(store, Some(community))?;
     let existing = core.all_events()?;
+    let (bootstrap_peer, address) = match options.optional_one("--address")? {
+        Some(address) => (state.device().peer_id(), parse_multiaddr(address)?),
+        None => {
+            let profile = resolve(&existing)?;
+            home_server_target(
+                profile
+                    .snapshot
+                    .home_server
+                    .as_ref()
+                    .ok_or(CliError::MissingHomeServer)?,
+            )?
+        }
+    };
     let capability = InviteCapability::generate();
     let invitation = create_chat_event(
         state.user(),
@@ -470,7 +665,7 @@ fn command_create_invite(options: &Options) -> Result<(), CliError> {
         return Err(CliError::ProfileRejected);
     }
     let package = capability.encode_package(community, invitation.event_id)?;
-    let code = create_code(package, state.device().peer_id(), &address)?;
+    let code = create_code(package, bootstrap_peer, &address)?;
     core.ingest(vec![invitation.clone()])?;
     println!(
         "INVITATION_ID={}",
@@ -584,7 +779,19 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
                 let endpoint_user = network
                     .provisional_user(peer)
                     .ok_or(CliError::UntrustedBootstrapEndpoint)?;
-                if !resolution.snapshot.members.contains(&endpoint_user) {
+                let endpoint_device = network
+                    .provisional_device(peer)
+                    .ok_or(CliError::UntrustedBootstrapEndpoint)?;
+                let member_endpoint = resolution.snapshot.members.contains(&endpoint_user);
+                let home_server_endpoint =
+                    resolution
+                        .snapshot
+                        .home_server
+                        .as_ref()
+                        .is_some_and(|binding| {
+                            DeviceId::from_public_key(&binding.server_public_key) == endpoint_device
+                        });
+                if !member_endpoint && !home_server_endpoint {
                     return Err(CliError::UntrustedBootstrapEndpoint);
                 }
                 network.approve_bootstrap_endpoint(peer)?;
@@ -651,6 +858,7 @@ async fn command_network(
             "--dial-peer",
             "--dial-address",
             "--exit-after-events",
+            "--idle-timeout-ms",
         ])?,
         (NetworkRole::Peer, DialMode::HomeServer) => options.allow_only(&[
             "--state",
@@ -658,6 +866,7 @@ async fn command_network(
             "--listen",
             "--relay-address",
             "--exit-after-events",
+            "--idle-timeout-ms",
         ])?,
         (NetworkRole::HomeServer, DialMode::Explicit) => options.allow_only(&[
             "--state",
@@ -690,6 +899,11 @@ async fn command_network(
         .optional_one("--exit-after-events")?
         .map(parse_positive_usize)
         .transpose()?;
+    let idle_timeout = options
+        .optional_one("--idle-timeout-ms")?
+        .map(parse_positive_milliseconds)
+        .transpose()?
+        .map(Duration::from_millis);
     let max_store_bytes = if role == NetworkRole::HomeServer {
         Some(
             options
@@ -791,8 +1005,29 @@ async fn command_network(
     }
     io::stdout().flush()?;
 
+    let mut synchronization_started = false;
     loop {
-        let event = network.next_event().await?;
+        let event = if synchronization_started && idle_timeout.is_some() {
+            match tokio::time::timeout(
+                idle_timeout
+                    .ok_or_else(|| CliError::Arguments("idle timeout is missing".into()))?,
+                network.next_event(),
+            )
+            .await
+            {
+                Ok(result) => result?,
+                Err(_) => {
+                    println!(
+                        "SYNC_COMPLETE events={}",
+                        network.sync_peer().node().event_ids().len()
+                    );
+                    io::stdout().flush()?;
+                    return Ok(());
+                }
+            }
+        } else {
+            network.next_event().await?
+        };
         let sync_progress = matches!(
             &event,
             NetworkEvent::Authenticated(_) | NetworkEvent::SyncProgress(_)
@@ -872,6 +1107,9 @@ async fn command_network(
             role,
             state.device().public_key(),
         )?;
+        if sync_progress {
+            synchronization_started = true;
+        }
         io::stdout().flush()?;
         if sync_progress
             && exit_after_events
@@ -907,6 +1145,17 @@ fn refresh_network_authorization(
             CliError::MissingHomeServer
         });
     }
+    let mut bootstrap_grants = Vec::new();
+    for (invitation, capability_public_key) in &profile.snapshot.active_invitations {
+        bootstrap_grants.push(BootstrapGrant {
+            invitation: *invitation,
+            capability_public_key: *capability_public_key,
+            ancestry: network
+                .sync_peer()
+                .node()
+                .ancestry(*invitation, MAX_BOOTSTRAP_ANCESTRY_EVENTS)?,
+        });
+    }
     let mut allowed_users = explicit_allowed_users.clone();
     allowed_users.extend(profile.snapshot.members);
     let trusted_infrastructure_devices = profile
@@ -916,6 +1165,7 @@ fn refresh_network_authorization(
         .map(|binding| DeviceId::from_public_key(&binding.server_public_key))
         .collect();
     network.replace_authorization(allowed_users, trusted_infrastructure_devices);
+    network.replace_bootstrap_grants(bootstrap_grants)?;
     Ok(())
 }
 
@@ -1010,6 +1260,18 @@ fn parse_positive_u64(value: &str) -> Result<u64, CliError> {
     if parsed == 0 {
         return Err(CliError::Arguments(
             "byte count must be greater than zero".into(),
+        ));
+    }
+    Ok(parsed)
+}
+
+fn parse_positive_milliseconds(value: &str) -> Result<u64, CliError> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| CliError::Arguments("timeout must be a positive integer".into()))?;
+    if parsed == 0 {
+        return Err(CliError::Arguments(
+            "timeout must be greater than zero".into(),
         ));
     }
     Ok(parsed)

@@ -180,3 +180,17 @@ Repeat M2e across a small NAT/firewall matrix, record direct-upgrade latency,
 success, fallback traffic and session stability, then define a replaceable relay
 selection profile. Do not add voice, files or a project-operated public relay
 until their respective engineering gates are met.
+
+## M4a — friends-alpha text client (implemented locally)
+
+- native Chinese/English desktop shell for macOS and Windows
+- automatic test identity initialization in the platform application-data path
+- one-community invite, channel, signed-message and history workflow
+- bounded one-shot Home Server synchronization for interactive clients
+- Home Server bootstrap derived from its signed declaration
+- dynamic removal and addition of single-use bootstrap grants
+- macOS arm64 and Windows x64 artifact workflow
+- no recovery, multi-device identity, trusted code signing, attachments, voice,
+  automatic update or public-service readiness
+
+See [`ADR 0022`](adr/0022-friends-alpha-desktop-and-server-bootstrap.md).

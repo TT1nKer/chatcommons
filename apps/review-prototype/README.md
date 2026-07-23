@@ -65,7 +65,7 @@ the parent ttinker website at `/chatcommons/`; it does not own the site root.
 
 ## ttinker deployment
 
-The current review build is served at `https://ttinker.dev/chatcommons/`.
+The current review build is served at `https://ttinker.net/chatcommons/`.
 Deployment secrets are generated on the host and kept only in
 `/etc/ttinker-chatcommons-review.env`; they must never be committed.
 

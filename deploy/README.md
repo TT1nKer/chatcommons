@@ -4,6 +4,9 @@ The supplied systemd unit runs one ChatCommons community per isolated state
 directory. It is a private diagnostic deployment baseline, not approval to
 operate a public service. It does not configure DNS, nginx, a firewall, a cloud
 security group, a relay, monitoring, off-host backup storage or log retention.
+The unit permits `AF_NETLINK` only because libp2p uses `NETLINK_ROUTE` to
+enumerate local interfaces before publishing its QUIC listen addresses; the
+service still receives no Linux capabilities.
 
 ## Install the process
 

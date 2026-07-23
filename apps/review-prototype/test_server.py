@@ -159,6 +159,14 @@ class ReviewServerTest(unittest.TestCase):
         review_id = json.loads(body)["reviews"][0]["id"]
         status, _, _ = self.request("PATCH", f"/api/admin/reviews/{review_id}", {"status": "unknown", "adminReply": ""}, OWNER_TOKEN, owner=True)
         self.assertEqual(status, 400)
+        status, _, body = self.request(
+            "PATCH",
+            f"/api/admin/reviews/{review_id}",
+            {"status": "client_review", "adminReply": ""},
+            OWNER_TOKEN,
+            owner=True,
+        )
+        self.assertEqual(status, 400, body)
 
     def test_private_real_screenshot(self):
         png = b"\x89PNG\r\n\x1a\n" + b"test-payload"

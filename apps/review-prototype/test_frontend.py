@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
 
 PUBLIC = Path(__file__).parent / "public"
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class FrontendLocalizationContractTest(unittest.TestCase):
+    def test_product_version_is_consistent_across_workspace_and_prototype(self):
+        version = (ROOT / "VERSION").read_text().strip()
+        cargo = (ROOT / "Cargo.toml").read_text()
+        html = (PUBLIC / "index.html").read_text()
+        manifest = (PUBLIC / "version.json").read_text()
+        cargo_version = re.search(r'^version = "([^"]+)"$', cargo, re.MULTILINE)
+        self.assertIsNotNone(cargo_version)
+        self.assertEqual(version, cargo_version.group(1))
+        self.assertIn(f"v{version}", html)
+        self.assertIn(f'"productVersion": "{version}"', manifest)
+
     def test_home_prioritizes_joining_and_surfaces_activity_before_recents(self):
         html = (PUBLIC / "index.html").read_text()
         join = '<button class="primary-action" type="button" data-action="join">'
@@ -16,11 +29,32 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         self.assertIn(create, html)
         self.assertLess(html.index('class="pulse-section"'), html.index('class="continue-section"'))
 
+    def test_first_view_explains_the_product_before_requesting_ui_feedback(self):
+        html = (PUBLIC / "index.html").read_text()
+        localization = (PUBLIC / "i18n.js").read_text()
+        application = (PUBLIC / "app.js").read_text()
+        self.assertIn("让社区聊天不再被单一平台锁住。", html)
+        self.assertIn("Community chat without platform lock-in", html)
+        self.assertIn('data-action="copy-brief"', html)
+        self.assertIn("function openAbout()", application)
+        self.assertIn("function copyProjectBrief()", application)
+        self.assertIn("function openCommunityBrowser(roomsOnly = false)", application)
+        self.assertIn("Community chat without platform lock-in.", localization)
+        self.assertNotIn('class="connection-pill"', html)
+
     def test_language_runtime_loads_before_interactions(self):
         html = (PUBLIC / "index.html").read_text()
         self.assertLess(html.index('src="./i18n.js"'), html.index('src="./app.js"'))
         self.assertIn('id="language-toggle"', html)
         self.assertIn('data-action="toggle-language"', html)
+
+    def test_review_toolbar_does_not_wait_for_screenshot_library(self):
+        html = (PUBLIC / "index.html").read_text()
+        review = (PUBLIC / "review.js").read_text()
+        self.assertNotIn('src="./vendor/html2canvas.min.js"', html)
+        self.assertLess(html.index('src="./review.js"'), html.index('src="./app.js"'))
+        self.assertIn("script.src = './vendor/html2canvas.min.js'", review)
+        self.assertIn("const html2canvas = await loadScreenshotLibrary()", review)
 
     def test_locale_is_persistent_and_review_context_is_language_neutral(self):
         localization = (PUBLIC / "i18n.js").read_text()
@@ -42,6 +76,30 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         self.assertIn("method: 'PATCH'", review)
         self.assertIn("method: 'DELETE'", review)
         self.assertIn("rememberEditToken(created.publicId, created.editToken)", review)
+
+    def test_reviewer_toolbar_publicly_thanks_feedback_contributors(self):
+        review = (PUBLIC / "review.js").read_text()
+        localization = (PUBLIC / "i18n.js").read_text()
+        self.assertIn("Thank you, early reviewers", review)
+        self.assertIn("Your comments about the project explanation", review)
+        self.assertIn("credit you as early product and design contributors", review)
+        self.assertIn("prefer to stay anonymous", review)
+        self.assertIn("感谢每一位早期评审者", localization)
+        self.assertIn("我们也希望把你列为早期产品与设计贡献者", localization)
+        self.assertIn("data-review-credit", review)
+        self.assertIn("function openContributorForm()", review)
+        self.assertIn("name=\"creditName\"", review)
+        self.assertIn("name=\"anonymous\"", review)
+        self.assertIn("screen: 'contributor-credit'", review)
+        self.assertIn("rememberEditToken(created.publicId, created.editToken)", review)
+        self.assertIn("提交署名信息", localization)
+
+    def test_owner_inbox_has_a_bilingual_thank_you_close_loop(self):
+        admin = (PUBLIC / "admin.js").read_text()
+        self.assertIn("const thankYouReply", admin)
+        self.assertIn("Thank you for taking the time", admin)
+        self.assertIn("感谢并待验收", admin)
+        self.assertIn("select.value='client_review'", admin)
 
     def test_review_markers_follow_document_and_nested_scroll(self):
         review = (PUBLIC / "review.js").read_text()

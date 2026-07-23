@@ -11,6 +11,7 @@
   const inbox = document.querySelector('#inbox');
   const errorBox = document.querySelector('#admin-error');
   const labels = { layout:'布局',copy:'文案',feature:'交互',product:'产品逻辑',low:'不急',normal:'一般',high:'重要' };
+  const thankYouReply = 'Thank you for taking the time to explain this. Your feedback genuinely helps ChatCommons improve. We have made the corresponding change and moved it to “Ready for review.” Please keep pointing out anything that still feels unclear or unnatural.\n\n感谢你认真说明这个问题。你的反馈确实帮助 ChatCommons 变得更好；我们已经完成对应修改并将它移到“待验收”。如果还有不清楚或不自然的地方，请继续指出。';
 
   async function api(path, options = {}) {
     const response = await fetch(`./api/admin${path}`, { credentials:'same-origin', ...options, headers:{ 'Content-Type':'application/json','X-Owner-Token':token,...(options.headers||{}) } });
@@ -42,8 +43,11 @@
       const controls=node('form','review-controls');
       const statusLabel=node('label','','处理状态'); const select=document.createElement('select'); select.name='status'; [['pending','待确认'],['in_progress','处理中'],['client_review','待朋友验收'],['completed','已完成'],['rejected','暂不处理'],['withdrawn','朋友已撤回']].forEach(([value,text])=>{const option=document.createElement('option');option.value=value;option.textContent=text;option.selected=item.status===value;select.appendChild(option);}); statusLabel.appendChild(select);
       const replyLabel=node('label','','给朋友的回复'); const textarea=document.createElement('textarea'); textarea.name='reply'; textarea.maxLength=1000; textarea.placeholder='说明已修改什么，或者为什么暂不处理'; textarea.value=item.adminReply||''; replyLabel.appendChild(textarea);
-      const save=node('button','', '保存处理结果'); save.type='submit'; controls.append(statusLabel,replyLabel,save);
-      controls.onsubmit=async(event)=>{event.preventDefault();save.disabled=true;try{await api(`/reviews/${item.id}`,{method:'PATCH',body:JSON.stringify({status:select.value,adminReply:textarea.value.trim()})});save.textContent='已保存';setTimeout(()=>{save.textContent='保存处理结果';save.disabled=false;},1200);}catch(error){showError(error.message);save.disabled=false;}};
+      const thank=node('button','thank-button','感谢并待验收'); thank.type='button';
+      const save=node('button','', '保存处理结果'); save.type='submit'; controls.append(statusLabel,replyLabel,thank,save);
+      const persist=async(button)=>{thank.disabled=true;save.disabled=true;try{await api(`/reviews/${item.id}`,{method:'PATCH',body:JSON.stringify({status:select.value,adminReply:textarea.value.trim()})});button.textContent='已发送';await load();}catch(error){showError(error.message);thank.disabled=false;save.disabled=false;}};
+      thank.onclick=()=>{select.value='client_review';textarea.value=thankYouReply;persist(thank);};
+      controls.onsubmit=(event)=>{event.preventDefault();persist(save);};
       card.append(shot,meta,controls); inbox.appendChild(card);
     });
   }

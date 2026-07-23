@@ -358,6 +358,8 @@ class ReviewApplication:
         reply = self.clean_text(payload.get("adminReply"), 1000)
         if status not in STATUSES:
             raise ValueError("处理状态无效")
+        if status in {"client_review", "completed", "rejected"} and not reply:
+            raise ValueError("待验收、已完成或暂不处理的意见必须给朋友留下回复")
         now = utc_now()
         with self.database() as connection:
             result = connection.execute(

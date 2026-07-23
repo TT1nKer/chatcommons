@@ -14,6 +14,25 @@
   const $ = (selector, parent = document) => parent.querySelector(selector);
   const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
   const l = (chinese, english) => window.chatcommonsI18n.pick(chinese, english);
+  let screenshotLibraryPromise;
+
+  function loadScreenshotLibrary() {
+    if (window.html2canvas) return Promise.resolve(window.html2canvas);
+    if (screenshotLibraryPromise) return screenshotLibraryPromise;
+    screenshotLibraryPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = './vendor/html2canvas.min.js';
+      script.async = true;
+      script.dataset.reviewUi = 'true';
+      script.onload = () => window.html2canvas
+        ? resolve(window.html2canvas)
+        : reject(new Error('Screenshot library did not initialize'));
+      script.onerror = () => reject(new Error('Screenshot library could not be loaded'));
+      document.head.appendChild(script);
+    });
+    return screenshotLibraryPromise;
+  }
+
   const editStorageKey = 'chatcommons-review-edit-tokens-v1';
   function loadEditTokens() {
     try {
@@ -346,6 +365,80 @@
     } catch (error) { notify(error.message); }
   }
 
+  function openContributorForm() {
+    const appreciation = $('.review-appreciation');
+    const rect = appreciation.getBoundingClientRect();
+    const modal = document.createElement('div');
+    modal.className = 'review-modal';
+    modal.dataset.reviewUi = 'true';
+    modal.innerHTML = `<form class="review-form contributor-form">
+      <h2>贡献者署名</h2>
+      <p>谢谢你帮助改进 ChatCommons。提交后会进入管理员收件箱，确认后再加入公开贡献者名单。</p>
+      <label class="review-check"><input type="checkbox" name="anonymous"> 我希望保持匿名</label>
+      <label data-credit-public>公开名称或账号<input name="creditName" required maxlength="80" autocomplete="nickname" placeholder="例如：Pinksie 或 @pinksie"></label>
+      <label data-credit-public>个人主页（可选）<input name="creditLink" type="url" maxlength="240" inputmode="url" placeholder="https://"></label>
+      <div class="review-form-actions"><button class="secondary" type="button" data-review-cancel>取消</button><button type="submit">提交署名信息</button></div>
+    </form>`;
+    window.chatcommonsI18n.translateSubtree(modal);
+    document.body.appendChild(modal);
+    const form = $('.review-form', modal);
+    const anonymous = form.elements.anonymous;
+    const name = form.elements.creditName;
+    const link = form.elements.creditLink;
+    const updateMode = () => {
+      $$('[data-credit-public]', form).forEach((label) => { label.hidden = anonymous.checked; });
+      name.required = !anonymous.checked;
+      if (anonymous.checked) {
+        name.value = '';
+        link.value = '';
+      }
+    };
+    anonymous.onchange = updateMode;
+    $('[data-review-cancel]', modal).onclick = () => modal.remove();
+    modal.onclick = (event) => { if (event.target === modal) modal.remove(); };
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const submit = $('button[type="submit"]', form);
+      submit.disabled = true;
+      const preference = anonymous.checked
+        ? l('贡献者署名选择：保持匿名，不公开姓名或账号。', 'Contributor credit preference: remain anonymous; do not publish a name or handle.')
+        : l(
+          `贡献者署名申请：公开名称或账号为“${name.value.trim()}”${link.value.trim() ? `；个人主页：${link.value.trim()}` : ''}。`,
+          `Contributor credit request: publish as “${name.value.trim()}”${link.value.trim() ? `; profile: ${link.value.trim()}` : ''}.`,
+        );
+      try {
+        const created = await api('/reviews', {
+          method: 'POST',
+          body: JSON.stringify({
+            surface: 'prototype',
+            screen: 'contributor-credit',
+            targetId: '.review-appreciation',
+            targetText: l('早期贡献者署名', 'Early contributor credit'),
+            x: Math.min(1, Math.max(0, (rect.left + rect.width / 2) / innerWidth)),
+            y: Math.min(1, Math.max(0, (rect.top + rect.height / 2) / innerHeight)),
+            scrollX: Math.max(0, window.scrollX),
+            scrollY: Math.max(0, window.scrollY),
+            viewportWidth: innerWidth,
+            viewportHeight: innerHeight,
+            category: 'product',
+            priority: 'normal',
+            message: preference,
+            screenshot: '',
+          }),
+        });
+        rememberEditToken(created.publicId, created.editToken);
+        modal.remove();
+        await loadReviews();
+        $('#review-list').hidden = false;
+        notify(l('署名信息已提交，感谢你的贡献', 'Credit preference submitted. Thank you for contributing.'));
+      } catch (error) {
+        notify(error.message);
+        submit.disabled = false;
+      }
+    };
+    name.focus();
+  }
+
   function openForm(element) {
     const rect = element.getBoundingClientRect();
     const selectedScreen = currentScreen();
@@ -374,18 +467,17 @@
       submit.disabled = true;
       try {
         let screenshot = '';
-        if (window.html2canvas) {
-          try {
-            const canvas = await window.html2canvas(document.documentElement, {
-              x: scrollX, y: scrollY, width: innerWidth, height: innerHeight,
-              windowWidth: innerWidth, windowHeight: innerHeight,
-              scale: 0.65, useCORS: true, logging: false,
-              ignoreElements: (node) => node.hasAttribute?.('data-review-ui'),
-            });
-            screenshot = canvas.toDataURL('image/jpeg', 0.68);
-            if (screenshot.length > 1450000) screenshot = canvas.toDataURL('image/jpeg', 0.45);
-          } catch (_) { screenshot = ''; }
-        }
+        try {
+          const html2canvas = await loadScreenshotLibrary();
+          const canvas = await html2canvas(document.documentElement, {
+            x: scrollX, y: scrollY, width: innerWidth, height: innerHeight,
+            windowWidth: innerWidth, windowHeight: innerHeight,
+            scale: 0.65, useCORS: true, logging: false,
+            ignoreElements: (node) => node.hasAttribute?.('data-review-ui'),
+          });
+          screenshot = canvas.toDataURL('image/jpeg', 0.68);
+          if (screenshot.length > 1450000) screenshot = canvas.toDataURL('image/jpeg', 0.45);
+        } catch (_) { screenshot = ''; }
         const payload = {
           surface: 'prototype', screen: selectedScreen,
           targetId: selectorFor(element), targetText: visibleText(element),
@@ -412,12 +504,20 @@
   const toolbar = document.createElement('aside');
   toolbar.className = 'review-toolbar';
   toolbar.dataset.reviewUi = 'true';
-  toolbar.innerHTML = `<strong>原型评审</strong><small>正常操作页面；需要评论时再点“标注意见”。</small><div class="review-toolbar-actions"><button type="button" data-review-select>标注意见</button><button type="button" class="secondary" data-review-list>已有意见</button><button type="button" class="secondary" data-review-share>复制审阅链接</button></div><div class="review-list" id="review-list" hidden></div>`;
+  toolbar.innerHTML = `<strong>原型评审</strong><small>正常操作页面；需要评论时再点“标注意见”。</small>
+    <details class="review-appreciation" open>
+      <summary>Thank you, early reviewers</summary>
+      <p>Thank you all for taking the time to review ChatCommons. Your comments about the project explanation, visual hierarchy, invitations, mentions, navigation, and empty space were genuinely useful. We have updated the prototype and added a clearer product brief based on your feedback.</p>
+      <small>We would also like to credit you as early product and design contributors. Please tell us which public name or handle you would like us to use—or if you would prefer to stay anonymous.</small>
+      <button type="button" class="credit-button" data-review-credit>提交署名信息</button>
+    </details>
+    <div class="review-toolbar-actions"><button type="button" data-review-select>标注意见</button><button type="button" class="secondary" data-review-list>已有意见</button><button type="button" class="secondary" data-review-share>复制审阅链接</button></div><div class="review-list" id="review-list" hidden></div>`;
   window.chatcommonsI18n.translateSubtree(toolbar);
   document.body.appendChild(toolbar);
   $('[data-review-select]').onclick = () => setSelecting(!state.selecting);
   $('[data-review-list]').onclick = () => { const list = $('#review-list'); list.hidden = !list.hidden; if (!list.hidden) renderList(); };
   $('[data-review-share]').onclick = copyReviewLink;
+  $('[data-review-credit]').onclick = openContributorForm;
   document.addEventListener('mouseover', (event) => {
     if (!state.selecting || event.target.closest('[data-review-ui]')) return;
     clearHighlight();

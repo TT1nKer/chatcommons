@@ -404,6 +404,25 @@ impl NetworkNode {
     }
 
     pub fn register_bootstrap_grant(&mut self, grant: BootstrapGrant) -> Result<(), NetworkError> {
+        self.validate_bootstrap_grant(&grant)?;
+        self.bootstrap_grants.insert(grant.invitation, grant);
+        Ok(())
+    }
+
+    pub fn replace_bootstrap_grants(
+        &mut self,
+        grants: Vec<BootstrapGrant>,
+    ) -> Result<(), NetworkError> {
+        let mut replacement = BTreeMap::new();
+        for grant in grants {
+            self.validate_bootstrap_grant(&grant)?;
+            replacement.insert(grant.invitation, grant);
+        }
+        self.bootstrap_grants = replacement;
+        Ok(())
+    }
+
+    fn validate_bootstrap_grant(&self, grant: &BootstrapGrant) -> Result<(), NetworkError> {
         if grant.ancestry.is_empty()
             || grant.ancestry.len() > MAX_BOOTSTRAP_ANCESTRY_EVENTS
             || !grant
@@ -440,7 +459,6 @@ impl NetworkNode {
                 "invitation ancestry exceeds the network frame limit".into(),
             ));
         }
-        self.bootstrap_grants.insert(grant.invitation, grant);
         Ok(())
     }
 
@@ -464,6 +482,10 @@ impl NetworkNode {
 
     pub fn provisional_user(&self, peer: PeerId) -> Option<UserId> {
         self.provisional.get(&peer).map(|device| device.user_id)
+    }
+
+    pub fn provisional_device(&self, peer: PeerId) -> Option<auth::DeviceId> {
+        self.provisional.get(&peer).map(|device| device.device_id)
     }
 
     pub fn approve_bootstrap_endpoint(&mut self, peer: PeerId) -> Result<(), NetworkError> {

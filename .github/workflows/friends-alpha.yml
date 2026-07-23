@@ -1,0 +1,109 @@
+name: Friends alpha
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install desktop build libraries
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev
+      - run: cargo fmt --all -- --check
+      - run: cargo build --workspace --all-targets
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --all-targets
+
+  macos:
+    needs: verify
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p chatcommons-cli --bin chatcommons-node -p chatcommons-desktop
+      - name: Package application bundle
+        run: |
+          set -eu
+          app="dist/ChatCommons Alpha.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp target/release/chatcommons-desktop "$app/Contents/MacOS/"
+          cp target/release/chatcommons-node "$app/Contents/MacOS/"
+          cp apps/desktop/packaging/Info.plist "$app/Contents/"
+          cp README.md LICENSE VERSION apps/desktop/README.md "$app/Contents/Resources/"
+          codesign --force --deep --sign - "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" ChatCommons-alpha-macOS-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChatCommons-alpha-macOS-arm64
+          path: ChatCommons-alpha-macOS-arm64.zip
+          if-no-files-found: error
+
+  windows:
+    needs: verify
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p chatcommons-cli --bin chatcommons-node -p chatcommons-desktop
+      - name: Package Windows application
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/ChatCommons-alpha | Out-Null
+          Copy-Item target/release/chatcommons-desktop.exe dist/ChatCommons-alpha/ChatCommons.exe
+          Copy-Item target/release/chatcommons-node.exe dist/ChatCommons-alpha/chatcommons-node.exe
+          Copy-Item README.md,LICENSE,VERSION,apps/desktop/README.md dist/ChatCommons-alpha/
+          Compress-Archive -Path dist/ChatCommons-alpha -DestinationPath ChatCommons-alpha-Windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChatCommons-alpha-Windows-x64
+          path: ChatCommons-alpha-Windows-x64.zip
+          if-no-files-found: error
+
+  linux-server:
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p chatcommons-cli --bin chatcommons-node
+      - name: Package Home Server binary
+        run: |
+          set -eu
+          mkdir -p dist/ChatCommons-alpha-Linux-x64
+          cp target/release/chatcommons-node dist/ChatCommons-alpha-Linux-x64/
+          cp README.md LICENSE VERSION deploy/README.md dist/ChatCommons-alpha-Linux-x64/
+          tar -C dist -czf ChatCommons-alpha-Linux-x64.tar.gz ChatCommons-alpha-Linux-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChatCommons-alpha-Linux-x64
+          path: ChatCommons-alpha-Linux-x64.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [macos, windows, linux-server]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ChatCommons-alpha-*
+          path: dist
+          merge-multiple: true
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}" dist/*
+          --title "ChatCommons ${GITHUB_REF_NAME}"
+          --notes "Friends alpha: real signed text chat over a replaceable Community Home Server. Test identities only; binaries are not notarized or code-signed with a trusted publisher certificate."
+          --prerelease

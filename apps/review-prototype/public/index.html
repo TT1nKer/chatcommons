@@ -3,15 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="ChatCommons 功能导向桌面体验原型" />
+    <meta name="description" content="ChatCommons 是一个开源、社区自有、服务器可迁移的聊天应用原型。" />
+    <meta property="og:title" content="ChatCommons — Community chat without platform lock-in" />
+    <meta property="og:description" content="An open-source community chat app where each community chooses its home server and can move without starting over." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ttinker.net/chatcommons/" />
+    <meta name="twitter:card" content="summary" />
     <meta name="theme-color" content="#17161b" />
     <title>ChatCommons · 交互原型</title>
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./review.css" />
-    <script defer src="./vendor/html2canvas.min.js"></script>
     <script defer src="./i18n.js"></script>
-    <script defer src="./app.js"></script>
     <script defer src="./review.js"></script>
+    <script defer src="./app.js"></script>
   </head>
   <body>
     <div class="app-shell" id="app-shell">
@@ -19,10 +23,11 @@
         <button class="brand" type="button" data-action="home" aria-label="回到现在">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
           <span>ChatCommons</span>
-          <small>交互原型</small>
+          <small><span>交互原型</span><b>v0.1.0-alpha.1</b></small>
         </button>
         <nav class="top-actions" aria-label="全局操作">
           <button class="search-button" type="button" data-action="search"><span>⌘ K</span> 找社区、房间或操作</button>
+          <button class="quiet-button" type="button" data-action="about">项目介绍</button>
           <button class="quiet-button" type="button" data-action="customize" aria-label="调整界面">调整界面</button>
           <button class="language-toggle" id="language-toggle" type="button" data-action="toggle-language" aria-label="Switch to English">EN</button>
           <button class="avatar-button" type="button" data-action="profile" aria-label="打开个人资料">林</button>
@@ -31,11 +36,29 @@
 
       <main class="workspace">
         <section class="screen screen-home is-active" id="home-screen" data-screen="home" aria-labelledby="home-title">
+          <section class="product-brief" aria-labelledby="mission-title">
+            <div class="brief-copy">
+              <p class="kicker">开源 · 社区自有 · 可迁移</p>
+              <h1 id="mission-title">让社区聊天不再被单一平台锁住。</h1>
+              <p>ChatCommons 是一个开源社区聊天应用。每个社区选择自己的长期在线主服务器；以后可以更换服务器，而不必重建身份、成员关系和整个社区。</p>
+              <div class="brief-actions">
+                <button class="primary-action" type="button" data-action="about">了解它如何工作</button>
+                <button class="secondary-action" type="button" data-action="copy-brief">复制项目简介</button>
+              </div>
+            </div>
+            <div class="brief-principles" aria-label="项目原则">
+              <div><span>01</span><strong>像普通群聊一样使用</strong><small>技术细节默认隐藏，邀请后直接加入。</small></div>
+              <div><span>02</span><strong>社区选择由谁托管</strong><small>可以是朋友、社区、企业或托管商。</small></div>
+              <div><span>03</span><strong>服务器可以被替换</strong><small>社区身份不绑定某一家公司或机器。</small></div>
+              <p class="prototype-status"><i></i><strong>当前是交互原型</strong><small>页面消息是演示数据，尚未连接真实聊天网络。</small></p>
+            </div>
+          </section>
+
           <div class="home-heading">
             <div>
-              <p class="kicker">星期一 · 7 月 20 日</p>
-              <h1 id="home-title">现在</h1>
-              <p>不用整理服务器。先看看朋友们正在聊什么。</p>
+              <p class="kicker">个人首页</p>
+              <h2 id="home-title">现在</h2>
+              <p>先处理需要你注意的事，再回到最近的社区。</p>
             </div>
             <div class="primary-actions">
               <button class="primary-action" type="button" data-action="join">通过邀请加入</button>
@@ -44,18 +67,18 @@
           </div>
 
           <section class="pulse-section" aria-labelledby="pulse-title">
-            <div class="section-title"><div><p>动态</p><h2 id="pulse-title">值得回来的几件事</h2></div></div>
+            <div class="section-title"><div><p>需要你注意</p><h2 id="pulse-title">提及、未读和邀请</h2></div></div>
             <div class="pulse-list">
-              <button type="button" data-community="opensource"><span class="pulse-icon">↗</span><span><strong>小陈提到了你</strong><small>开源小组 · 产品讨论</small></span><time>12 分钟</time></button>
-              <button type="button" data-community="weekend"><span class="pulse-icon">3</span><span><strong>周末游戏组有新消息</strong><small>从你上次离开的位置继续</small></span><time>刚刚</time></button>
+              <button class="pulse-priority" type="button" data-community="opensource"><span class="pulse-icon">@</span><span><strong>小陈提到了你</strong><small><b>开源小组</b> · 产品讨论</small></span><time>12 分钟</time></button>
+              <button type="button" data-community="weekend"><span class="pulse-icon">3</span><span><strong>周末游戏组有新消息</strong><small><b>周末游戏组</b> · 从你上次离开的位置继续</small></span><time>刚刚</time></button>
               <button type="button" data-action="invite"><span class="pulse-icon">＋</span><span><strong>邀请一个朋友</strong><small>每个链接只供一个人使用</small></span><time>创建邀请</time></button>
             </div>
           </section>
 
           <section class="continue-section" aria-labelledby="continue-title">
             <div class="section-title">
-              <div><p>继续</p><h2 id="continue-title">回到最近的对话</h2></div>
-              <button class="text-button" type="button" data-action="all-communities">全部社区 <span>3</span></button>
+              <div><p>你的社区</p><h2 id="continue-title">选择一个社区继续</h2></div>
+              <button class="text-button" type="button" data-action="all-communities">查找和筛选 <span>3</span></button>
             </div>
             <div class="community-grid" id="community-grid">
               <button class="community-card card-featured" type="button" data-community="weekend">
@@ -104,7 +127,7 @@
             <button class="room-tab is-active" type="button" role="tab" aria-selected="true" data-room="general">闲聊 <span>3</span></button>
             <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="games">游戏</button>
             <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="gear">装备讨论</button>
-            <button class="room-browser" type="button" data-action="rooms">所有房间 <span>⌄</span></button>
+            <button class="room-browser" type="button" data-action="rooms">浏览房间 <span>⌄</span></button>
           </div>
 
           <div class="conversation-layout">
@@ -138,7 +161,6 @@
         </section>
       </main>
 
-      <div class="connection-pill" id="connection-pill"><span></span><strong>已连接</strong><small>消息已同步</small></div>
     </div>
 
     <div class="dialog-layer" id="dialog-layer" hidden></div>

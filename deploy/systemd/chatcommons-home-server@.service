@@ -24,7 +24,8 @@ ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# libp2p enumerates local interfaces through NETLINK_ROUTE before binding QUIC.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true

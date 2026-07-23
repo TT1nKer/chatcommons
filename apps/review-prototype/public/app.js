@@ -182,19 +182,88 @@
     });
   }
 
-  function openPanel() {
+  function mountPanel(markup) {
     const panel = $('#side-panel');
-    panel.innerHTML = `<section class="panel-card" role="dialog" aria-modal="true" aria-labelledby="customize-title">
+    panel.innerHTML = markup;
+    i18n.translateSubtree(panel);
+    panel.hidden = false;
+    $('[data-panel-close]', panel).onclick = () => { panel.hidden = true; };
+    panel.onclick = (event) => { if (event.target === panel) panel.hidden = true; };
+    return panel;
+  }
+
+  function openAbout() {
+    mountPanel(`<section class="panel-card" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <div class="drawer-heading"><div><p>项目介绍</p><h2 id="about-title">ChatCommons 是什么</h2></div><button class="icon-button" type="button" data-panel-close aria-label="关闭介绍">×</button></div>
+      <p>它不是“不要服务器”，而是“不要唯一且不可替换的平台服务器”。</p>
+      <div class="about-flow">
+        <div class="about-step"><span>01</span><div><strong>社区选择由谁托管</strong><small>正常情况下，社区主服务器保存历史、接收消息并帮助成员连接。服务器短暂离线时，已在线成员可以临时直接同步；服务器恢复后再合并签名事件。</small></div></div>
+        <div class="about-step"><span>02</span><div><strong>我们已经完成</strong><small>签名身份与事件、本地 SQLite 历史、单人邀请、QUIC 同步、可替换主服务器及备份恢复。</small></div></div>
+        <div class="about-step"><span>03</span><div><strong>接下来要做</strong><small>把协议内核接入真正的桌面客户端，在永久测试社区里验证邀请、聊天和服务器迁移。</small></div></div>
+      </div>
+      <div class="panel-links"><a href="https://github.com/TT1nKer/chatcommons" target="_blank" rel="noopener noreferrer">查看源代码</a><button class="secondary-action" type="button" data-copy-brief>复制项目简介</button></div>
+    </section>`);
+    $('[data-copy-brief]', $('#side-panel')).onclick = copyProjectBrief;
+  }
+
+  async function copyProjectBrief() {
+    const brief = l(
+      'ChatCommons 是一个开源社区聊天应用，目标是提供熟悉、顺畅的社区体验，同时避免所有社区被同一个平台锁住。每个社区选择自己的长期在线主服务器；以后可以迁移服务器，而不必重建身份、成员关系和整个社区。成员身份和事件由签名验证，服务器短暂离线时，已在线成员可以临时直接同步。当前已经完成协议内核、邀请、QUIC 同步、可替换主服务器和备份恢复，网页仍是交互原型，下一步是接入真正的桌面客户端。\n\nhttps://ttinker.net/chatcommons/',
+      'ChatCommons is an open-source community chat app designed to feel familiar without locking every community into one platform. Each community chooses a long-running home server and can move later without rebuilding identities, membership, or the community itself. Signed identities and events are verified by clients, while online members can temporarily sync directly during a short server outage. The protocol core, invites, QUIC sync, replaceable home server, and backup recovery are implemented; the website is still an interactive prototype, and the next step is a real desktop client.\n\nhttps://ttinker.net/chatcommons/'
+    );
+    try {
+      await navigator.clipboard.writeText(brief);
+      toast(l('项目简介已复制，可以直接发给朋友', 'Project brief copied. You can send it directly to a friend.'));
+    } catch (_) {
+      window.prompt(l('手动复制项目简介', 'Copy the project brief manually'), brief);
+    }
+  }
+
+  function openCommunityBrowser(roomsOnly = false) {
+    const panel = mountPanel(`<section class="panel-card" role="dialog" aria-modal="true" aria-labelledby="browser-title">
+      <div class="drawer-heading"><div><p>社区与房间</p><h2 id="browser-title">查找和筛选</h2></div><button class="icon-button" type="button" data-panel-close aria-label="关闭">×</button></div>
+      <p>搜索结果会在这里实时筛选；协议不会因为界面分组而改变。</p>
+      <input class="browser-search" type="search" autocomplete="off" placeholder="输入名称进行筛选" aria-label="输入名称进行筛选" />
+      <div class="browser-group" ${roomsOnly ? 'hidden' : ''}><strong>收藏</strong><div class="browser-list">
+        <button type="button" data-browser-community="weekend"><strong>周末游戏组</strong><small>闲聊 · 3 条新消息</small></button>
+        <button type="button" data-browser-community="opensource"><strong>开源小组</strong><small>产品讨论 · 提到了你</small></button>
+      </div></div>
+      <div class="browser-group"><strong>${roomsOnly ? '文字房间' : '全部社区与房间'}</strong><div class="browser-list">
+        ${roomsOnly ? '' : '<button type="button" data-browser-community="family"><strong>家里人</strong><small>日常 · 没有未读</small></button>'}
+        <button type="button" data-browser-room="general"><strong>闲聊</strong><small>文字房间</small></button>
+        <button type="button" data-browser-room="games"><strong>游戏</strong><small>文字房间</small></button>
+        <button type="button" data-browser-room="gear"><strong>装备讨论</strong><small>文字房间</small></button>
+      </div></div>
+    </section>`);
+    const input = $('.browser-search', panel);
+    input.oninput = () => {
+      const query = input.value.trim().toLocaleLowerCase();
+      $$('.browser-list button', panel).forEach((button) => {
+        button.hidden = Boolean(query) && !button.textContent.toLocaleLowerCase().includes(query);
+      });
+    };
+    $$('[data-browser-community]', panel).forEach((button) => {
+      button.onclick = () => { panel.hidden = true; openCommunity(button.dataset.browserCommunity); };
+    });
+    $$('[data-browser-room]', panel).forEach((button) => {
+      button.onclick = () => {
+        const tab = $(`[data-room="${button.dataset.browserRoom}"]`);
+        panel.hidden = true;
+        if (state.screen !== 'community') openCommunity(state.community);
+        if (tab) setRoom(tab);
+      };
+    });
+    input.focus();
+  }
+
+  function openPanel() {
+    const panel = mountPanel(`<section class="panel-card" role="dialog" aria-modal="true" aria-labelledby="customize-title">
       <div class="drawer-heading"><div><p>视图</p><h2 id="customize-title">调整界面</h2></div><button class="icon-button" type="button" data-panel-close aria-label="关闭">×</button></div>
       <p>默认布局无需配置。这里的选项只改变你的本地显示，不改变社区协议。</p>
       <div class="setting-group"><h3>主题</h3><div class="setting-options"><button type="button" data-theme-choice="light">明亮</button><button type="button" data-theme-choice="dark">夜间</button></div></div>
       <div class="setting-group"><h3>信息密度</h3><div class="setting-options"><button type="button" data-density-choice="comfortable" class="is-active">舒适</button><button type="button" data-density-choice="compact">紧凑</button></div></div>
       <div class="setting-group"><h3>原型说明</h3><p>社区卡片、顶部房间和按需成员抽屉是本轮重点。请通过右下角“标注意见”直接点选不自然的地方。</p></div>
-    </section>`;
-    i18n.translateSubtree(panel);
-    panel.hidden = false;
-    $('[data-panel-close]', panel).onclick = () => { panel.hidden = true; };
-    panel.onclick = (event) => { if (event.target === panel) panel.hidden = true; };
+    </section>`);
     $$('[data-theme-choice]', panel).forEach((button) => {
       button.classList.toggle('is-active', document.documentElement.dataset.theme === button.dataset.themeChoice);
       button.onclick = () => {
@@ -256,13 +325,15 @@
       join: openJoin,
       invite: copyInvite,
       search: openSearch,
+      about: openAbout,
+      'copy-brief': copyProjectBrief,
       customize: openPanel,
       'toggle-language': () => i18n.toggle(),
       members: () => toggleMembers(true),
       'close-members': () => toggleMembers(false),
-      rooms: () => toast(l('房间较多时，这里会打开搜索面板', 'When there are more rooms, this opens a search panel')),
+      rooms: () => openCommunityBrowser(true),
       profile: () => toast(l('个人资料：林间（原型演示）', 'Profile: Linjian (prototype)')),
-      'all-communities': () => toast(l('当前共有 3 个社区', 'You currently have 3 communities')),
+      'all-communities': () => openCommunityBrowser(false),
       'room-info': () => toast(roomName() + l('：社区里的持久文字房间', ': a persistent text room in this community')),
       'future-feature': () => toast(l('文件、语音和投屏尚未进入本轮原型', 'Files, voice, and screen sharing are not in this prototype yet')),
     };
