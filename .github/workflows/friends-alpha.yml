@@ -110,6 +110,7 @@ jobs:
       - name: Create prerelease
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: >-
           gh release create "${GITHUB_REF_NAME}" dist/*
           --title "ChatCommons ${GITHUB_REF_NAME}"
