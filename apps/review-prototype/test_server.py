@@ -88,6 +88,25 @@ class ReviewServerTest(unittest.TestCase):
             "screenshot": screenshot,
         }
 
+    @staticmethod
+    def desktop_payload(screenshot=""):
+        return {
+            "surface": "desktop",
+            "screen": "community",
+            "targetId": "chat-window",
+            "targetText": "ChatCommons desktop feedback",
+            "x": 0.5,
+            "y": 0.5,
+            "scrollX": 0,
+            "scrollY": 0,
+            "viewportWidth": 1180,
+            "viewportHeight": 760,
+            "category": "feature",
+            "priority": "normal",
+            "message": "## What happened\n\n" + "很长的说明\n" * 800,
+            "screenshot": screenshot,
+        }
+
     def test_config_rejects_non_origin_urls(self):
         original = os.environ["REVIEW_ALLOWED_ORIGIN"]
         try:
@@ -115,7 +134,9 @@ class ReviewServerTest(unittest.TestCase):
         self.assertEqual(status, 401)
 
     def test_create_list_update_and_audit_inert_text(self):
-        status, _, body = self.request("POST", "/api/reviews", self.valid_payload(), REVIEW_TOKEN)
+        payload = self.valid_payload()
+        payload["message"] = "第一行\n" + "很长的网页反馈\n" * 800
+        status, _, body = self.request("POST", "/api/reviews", payload, REVIEW_TOKEN)
         self.assertEqual(status, 201, body)
         created = json.loads(body)
         self.assertNotIn("id", created)
@@ -124,7 +145,8 @@ class ReviewServerTest(unittest.TestCase):
         reviewer_item = json.loads(body)["reviews"][0]
         self.assertNotIn("id", reviewer_item)
         self.assertNotIn("targetId", reviewer_item)
-        self.assertIn("DROP TABLE", reviewer_item["message"])
+        self.assertGreater(len(reviewer_item["message"]), 1000)
+        self.assertIn("\n", reviewer_item["message"])
         self.assertEqual(reviewer_item["scrollX"], 12)
         self.assertEqual(reviewer_item["scrollY"], 640)
         status, _, body = self.request("GET", "/api/admin/reviews", token=OWNER_TOKEN, owner=True)
@@ -183,6 +205,53 @@ class ReviewServerTest(unittest.TestCase):
         self.assertEqual(headers.get_content_type(), "image/png")
         self.assertEqual(body, png)
 
+    def test_desktop_feedback_needs_no_embedded_secret_and_has_private_receipt(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"desktop-screenshot"
+        screenshot = "data:image/png;base64," + base64.b64encode(png).decode()
+        payload = self.desktop_payload(screenshot)
+        status, _, body = self.request(
+            "POST", "/api/app-feedback", payload, token=None, origin=None
+        )
+        self.assertEqual(status, 201, body)
+        created = json.loads(body)
+        self.assertGreater(len(payload["message"]), 1000)
+
+        status, _, _ = self.request(
+            "GET", f"/api/app-feedback/{created['publicId']}", origin=None
+        )
+        self.assertEqual(status, 404)
+        status, _, body = self.request(
+            "GET",
+            f"/api/app-feedback/{created['publicId']}",
+            origin=None,
+            edit_token=created["editToken"],
+        )
+        self.assertEqual(status, 200, body)
+        receipt = json.loads(body)
+        self.assertEqual(receipt["status"], "pending")
+
+        status, _, body = self.request(
+            "GET", "/api/reviews", token=REVIEW_TOKEN
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn(
+            created["publicId"],
+            {item["publicId"] for item in json.loads(body)["reviews"]},
+        )
+
+        status, _, body = self.request(
+            "GET", "/api/admin/reviews", token=OWNER_TOKEN, owner=True
+        )
+        self.assertEqual(status, 200)
+        item = next(
+            item
+            for item in json.loads(body)["reviews"]
+            if item["publicId"] == created["publicId"]
+        )
+        self.assertEqual(item["surface"], "desktop")
+        self.assertTrue(item["hasScreenshot"])
+        self.assertGreater(len(item["message"]), 1000)
+
     def test_reviewer_can_edit_and_withdraw_only_their_own_pending_review(self):
         payload = self.valid_payload()
         payload["message"] = "初始意见"
@@ -191,7 +260,11 @@ class ReviewServerTest(unittest.TestCase):
         created = json.loads(body)
         path = f"/api/reviews/{created['publicId']}"
 
-        edited = {"category": "feature", "priority": "high", "message": "更新后的意见 <script>"}
+        edited = {
+            "category": "feature",
+            "priority": "high",
+            "message": "更新后的意见 <script>\n" + "继续说明\n" * 800,
+        }
         status, _, _ = self.request(
             "PATCH", path, edited, REVIEW_TOKEN, edit_token="wrong-" + "x" * 48
         )
@@ -200,6 +273,13 @@ class ReviewServerTest(unittest.TestCase):
             "PATCH", path, edited, REVIEW_TOKEN, edit_token=created["editToken"]
         )
         self.assertEqual(status, 200)
+        status, _, body = self.request("GET", "/api/reviews", token=REVIEW_TOKEN)
+        updated = next(
+            item
+            for item in json.loads(body)["reviews"]
+            if item["publicId"] == created["publicId"]
+        )
+        self.assertGreater(len(updated["message"]), 1000)
 
         status, _, body = self.request("GET", "/api/reviews", token=REVIEW_TOKEN)
         item = next(review for review in json.loads(body)["reviews"] if review["publicId"] == created["publicId"])

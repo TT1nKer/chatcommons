@@ -42,6 +42,7 @@
   }
   const state = {
     selecting: false,
+    collapsed: localStorage.getItem('chatcommons-review-collapsed') === 'true',
     highlighted: null,
     reviews: [],
     markerItems: new Map(),
@@ -189,6 +190,21 @@
     if (!value) clearHighlight();
   }
 
+  function setCollapsed(value) {
+    state.collapsed = value;
+    toolbar.classList.toggle('is-collapsed', value);
+    toolbar.setAttribute('aria-expanded', String(!value));
+    const button = $('[data-review-collapse]');
+    button.textContent = value ? '＋' : '－';
+    button.title = value ? l('展开评审工具', 'Expand review tools') : l('收起评审工具', 'Collapse review tools');
+    button.setAttribute('aria-label', button.title);
+    localStorage.setItem('chatcommons-review-collapsed', String(value));
+    if (value) {
+      setSelecting(false);
+      $('#review-list').hidden = true;
+    }
+  }
+
   function notify(message) {
     let node = $('#review-notice');
     if (!node) {
@@ -283,6 +299,7 @@
   async function loadReviews() {
     try {
       const result = await api('/reviews');
+      document.documentElement.dataset.reviewAuthorized = 'true';
       state.reviews = result.reviews || [];
       renderList();
       renderMarkers();
@@ -315,7 +332,7 @@
         <label>意见类型<select name="category"><option value="layout">布局</option><option value="copy">文案</option><option value="feature">交互</option><option value="product">产品逻辑</option></select></label>
         <label>优先级<select name="priority"><option value="normal">一般</option><option value="high">重要</option><option value="low">不急</option></select></label>
       </div>
-      <label>具体意见<textarea name="message" required minlength="2" maxlength="1000"></textarea></label>
+      <label>具体意见<textarea name="message" required minlength="2"></textarea></label>
       <div class="review-form-actions"><button class="secondary" type="button" data-review-cancel>取消</button><button type="submit">保存修改</button></div>
     </form>`;
     window.chatcommonsI18n.translateSubtree(modal);
@@ -452,7 +469,7 @@
         <label>意见类型<select name="category"><option value="layout">布局</option><option value="copy">文案</option><option value="feature">交互</option><option value="product">产品逻辑</option></select></label>
         <label>优先级<select name="priority"><option value="normal">一般</option><option value="high">重要</option><option value="low">不急</option></select></label>
       </div>
-      <label>具体意见<textarea name="message" required minlength="2" maxlength="1000" placeholder="直接说你的感觉，例如：我不知道这里点了会发生什么"></textarea></label>
+      <label>具体意见<textarea name="message" required minlength="2" placeholder="直接说你的感觉，例如：我不知道这里点了会发生什么"></textarea></label>
       <div class="review-form-actions"><button class="secondary" type="button" data-review-cancel>取消</button><button type="submit">提交</button></div>
     </form>`;
     window.chatcommonsI18n.translateSubtree(modal);
@@ -504,20 +521,22 @@
   const toolbar = document.createElement('aside');
   toolbar.className = 'review-toolbar';
   toolbar.dataset.reviewUi = 'true';
-  toolbar.innerHTML = `<strong>原型评审</strong><small>正常操作页面；需要评论时再点“标注意见”。</small>
-    <details class="review-appreciation" open>
+  toolbar.innerHTML = `<div class="review-toolbar-heading"><div><strong>原型评审</strong><small>正常操作页面；需要评论时再点“标注意见”。</small></div><button type="button" class="review-collapse" data-review-collapse aria-label="收起评审工具">－</button></div>
+    <div class="review-toolbar-body"><details class="review-appreciation" open>
       <summary>Thank you, early reviewers</summary>
       <p>Thank you all for taking the time to review ChatCommons. Your comments about the project explanation, visual hierarchy, invitations, mentions, navigation, and empty space were genuinely useful. We have updated the prototype and added a clearer product brief based on your feedback.</p>
       <small>We would also like to credit you as early product and design contributors. Please tell us which public name or handle you would like us to use—or if you would prefer to stay anonymous.</small>
       <button type="button" class="credit-button" data-review-credit>提交署名信息</button>
     </details>
-    <div class="review-toolbar-actions"><button type="button" data-review-select>标注意见</button><button type="button" class="secondary" data-review-list>已有意见</button><button type="button" class="secondary" data-review-share>复制审阅链接</button></div><div class="review-list" id="review-list" hidden></div>`;
+    <div class="review-toolbar-actions"><button type="button" data-review-select>标注意见</button><button type="button" class="secondary" data-review-list>已有意见</button><button type="button" class="secondary" data-review-share>复制审阅链接</button></div><div class="review-list" id="review-list" hidden></div></div>`;
   window.chatcommonsI18n.translateSubtree(toolbar);
   document.body.appendChild(toolbar);
+  $('[data-review-collapse]').onclick = () => setCollapsed(!state.collapsed);
   $('[data-review-select]').onclick = () => setSelecting(!state.selecting);
   $('[data-review-list]').onclick = () => { const list = $('#review-list'); list.hidden = !list.hidden; if (!list.hidden) renderList(); };
   $('[data-review-share]').onclick = copyReviewLink;
   $('[data-review-credit]').onclick = openContributorForm;
+  setCollapsed(state.collapsed);
   document.addEventListener('mouseover', (event) => {
     if (!state.selecting || event.target.closest('[data-review-ui]')) return;
     clearHighlight();
@@ -538,6 +557,7 @@
   window.addEventListener('chatcommons:screen-change', renderMarkers);
   window.addEventListener('chatcommons:locale-change', () => {
     setSelecting(state.selecting);
+    setCollapsed(state.collapsed);
     renderList();
     renderMarkers();
   });

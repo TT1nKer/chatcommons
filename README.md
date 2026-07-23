@@ -1,6 +1,6 @@
 # ChatCommons
 
-Current product version: `0.1.0-alpha.1` (friends-and-contributors alpha).
+Current product version: `0.1.0-alpha.2` (friends-and-contributors alpha).
 Product releases, wire protocol versions, storage schema versions, and server
 deployment revisions are versioned independently. See
 [docs/versioning.md](docs/versioning.md).
@@ -14,6 +14,23 @@ declaration with a bounded diagnostic authenticated Home Server process. The
 workspace now also contains a minimal native friends-alpha text client. It
 contains no production hosted service, trusted release binary, voice
 implementation, account recovery or multi-device identity.
+
+## Friends-alpha preview
+
+The current native client is an intentionally small friends alpha: it creates a
+local test identity, joins a community with a one-person invitation, shows
+validated signed messages, and sends text through the replaceable Community
+Home Server. These screenshots are development captures and will change.
+
+| Join from an invitation | Signed community chat |
+| --- | --- |
+| ![ChatCommons invitation screen](docs/assets/screenshots/desktop-join-alpha.png) | ![ChatCommons community chat](docs/assets/screenshots/desktop-community-alpha.png) |
+
+![ChatCommons private in-app feedback form](docs/assets/screenshots/desktop-feedback-alpha.png)
+
+The in-app feedback form sends user-reviewed text and an optional,
+explicitly-captured app-window screenshot to the private ChatCommons feedback
+inbox. It does not require or create a public GitHub issue.
 
 ## Workspace
 

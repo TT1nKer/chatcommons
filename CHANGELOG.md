@@ -6,6 +6,8 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2026-07-23
+
 ### Added
 
 - Native Chinese/English friends-alpha desktop client for macOS and Windows.
@@ -15,6 +17,20 @@ and protocol compatibility are separate; see `docs/versioning.md`.
   community owner is offline.
 - Reproducible macOS, Windows, and Linux Home Server release artifacts.
 - A permanent `chatcommonsTestCommunity` deployment record and operating guide.
+- A redesigned native alpha interface with invitation, community chat and
+  bilingual views aligned with the web prototype.
+- Private in-app feedback with user-reviewed diagnostics, optional explicit
+  app-window screenshots, private receipts and owner replies.
+- Collapsible web annotation controls and review-session-only download entry
+  points.
+
+### Changed
+
+- Signed messages are now saved and rendered locally before bounded Home Server
+  synchronization, so an unreachable server no longer blocks immediate local
+  feedback.
+- The desktop feedback form is scrollable, has no product-level text-length
+  limit and does not require a GitHub account.
 
 ### Validated
 
@@ -29,6 +45,8 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 - Test identities do not yet have recovery or multi-device authorization.
 - The native bundles are not notarized or signed by a trusted publisher.
 - The desktop client intentionally supports one identity and one community.
+- Review-session-only download visibility does not make the otherwise public
+  GitHub release artifact private.
 
 ## [0.1.0-alpha.1] - 2026-07-22
 
@@ -58,5 +76,6 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 - Voice, video, screen sharing, MLS, attachments, and production account
   recovery are not implemented.
 
-[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.2...HEAD
+[0.1.0-alpha.2]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/TT1nKer/chatcommons/releases/tag/v0.1.0-alpha.1

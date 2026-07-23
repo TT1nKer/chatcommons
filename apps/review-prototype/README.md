@@ -17,6 +17,9 @@ The prototype demonstrates:
 - a Chinese/English toggle that persists locally and can later move into Settings;
 - an authenticated click-to-annotate review overlay;
 - an independently authenticated owner inbox with replies and workflow states.
+- a private desktop-feedback endpoint with optional screenshot attachments.
+- review-authorized download controls that remain hidden on the ordinary public
+  prototype.
 
 ## Local review
 
@@ -53,12 +56,19 @@ not publish either credential.
   1 MB decoded, and available only through the owner API.
 - Review submission is rate-limited and capped at 2 MB at both application and
   reverse-proxy layers.
+- Desktop alpha feedback does not require the reviewer credential because the
+  build is distributed directly to invited friends. It enters the same private
+  owner inbox, returns a private edit capability and remains subject to the same
+  request, screenshot and rate limits.
 - Reviewer text and target data are stored as inert values and rendered through
   DOM text nodes rather than HTML interpolation.
 - Owner replies and status changes are recorded in `audit_log`.
 
 The production service is for invited design review only. It does not implement
 accounts, password recovery, multiple review projects, backups, or public access.
+Hiding the download control outside an authorized review session is an
+invitation UX boundary, not DRM: the current GitHub repository and release
+artifacts remain public.
 The service can be rolled back by repointing its `current` symlink and restarting
 the isolated systemd unit. The reference deployment nests the application under
 the parent ttinker website at `/chatcommons/`; it does not own the site root.

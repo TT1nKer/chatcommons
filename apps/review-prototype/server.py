@@ -205,7 +205,19 @@ class ReviewApplication:
             output.write(content)
         return filename
 
-    def create_review(self, payload: object, client_ip: str, user_agent: str) -> dict[str, object]:
+    @staticmethod
+    def clean_multiline(value: object, maximum: int) -> str:
+        if not isinstance(value, str):
+            return ""
+        return value.replace("\x00", "").strip()[:maximum]
+
+    def create_review(
+        self,
+        payload: object,
+        client_ip: str,
+        user_agent: str,
+        expected_surface: str = "prototype",
+    ) -> dict[str, object]:
         if not isinstance(payload, dict):
             raise ValueError("请求内容无效")
         allowed = {
@@ -218,7 +230,7 @@ class ReviewApplication:
         screen = self.clean_text(payload.get("screen"), 180)
         target_id = self.clean_text(payload.get("targetId"), 500)
         target_text = self.clean_text(payload.get("targetText"), 300)
-        message = self.clean_text(payload.get("message"), 1000)
+        message = self.clean_multiline(payload.get("message"), 1_000_000)
         category = payload.get("category")
         priority = payload.get("priority")
         try:
@@ -228,7 +240,7 @@ class ReviewApplication:
             width, height = int(payload.get("viewportWidth")), int(payload.get("viewportHeight"))
         except (TypeError, ValueError) as error:
             raise ValueError("标注位置无效") from error
-        if surface != "prototype" or not screen or len(message) < 2:
+        if surface != expected_surface or not screen or len(message) < 2:
             raise ValueError("请完整填写意见")
         if category not in CATEGORIES or priority not in PRIORITIES:
             raise ValueError("意见类型或优先级无效")
@@ -269,10 +281,31 @@ class ReviewApplication:
             raise
         return {"publicId": public_id, "editToken": edit_token, "status": "pending", "createdAt": now}
 
+    def get_review_receipt(self, public_id: str, edit_token: str) -> dict[str, object] | None:
+        with self.database() as connection:
+            row = connection.execute(
+                "SELECT public_id,status,admin_reply,created_at,updated_at,edit_token_hash "
+                "FROM reviews WHERE public_id=? AND surface='desktop'",
+                (public_id,),
+            ).fetchone()
+        if row is None or not self.valid_edit_token(edit_token, row["edit_token_hash"]):
+            return None
+        return {
+            "publicId": row["public_id"],
+            "status": row["status"],
+            "adminReply": row["admin_reply"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
     def list_reviews(self, owner: bool) -> list[dict[str, object]]:
         with self.database() as connection:
-            query = "SELECT * FROM reviews ORDER BY id DESC LIMIT 300" if owner else (
-                "SELECT * FROM reviews WHERE status <> 'withdrawn' ORDER BY id DESC LIMIT 300"
+            query = (
+                "SELECT * FROM reviews ORDER BY id DESC LIMIT 300"
+                if owner
+                else "SELECT * FROM reviews "
+                "WHERE surface='prototype' AND status <> 'withdrawn' "
+                "ORDER BY id DESC LIMIT 300"
             )
             rows = connection.execute(query).fetchall()
         items = []
@@ -296,7 +329,7 @@ class ReviewApplication:
             raise ValueError("请求内容无效")
         category = payload.get("category")
         priority = payload.get("priority")
-        message = self.clean_text(payload.get("message"), 1000)
+        message = self.clean_multiline(payload.get("message"), 1_000_000)
         if category not in CATEGORIES or priority not in PRIORITIES or len(message) < 2:
             raise ValueError("请完整填写意见")
         now = utc_now()
@@ -460,6 +493,20 @@ def make_handler(application: ReviewApplication):
                 if self.require_authorized(True):
                     self.json_response(HTTPStatus.OK, {"reviews": application.list_reviews(True)})
                 return
+            receipt_prefix = "/api/app-feedback/"
+            if path.startswith(receipt_prefix):
+                public_id = path[len(receipt_prefix) :]
+                if PUBLIC_ID_PATTERN.fullmatch(public_id) is None:
+                    self.error_response(HTTPStatus.NOT_FOUND, "反馈不存在")
+                    return
+                receipt = application.get_review_receipt(
+                    public_id, self.headers.get("X-Edit-Token", "").strip()
+                )
+                if receipt is None:
+                    self.error_response(HTTPStatus.NOT_FOUND, "反馈不存在")
+                    return
+                self.json_response(HTTPStatus.OK, receipt)
+                return
             image_prefix = "/api/admin/reviews/"
             if path.startswith(image_prefix) and path.endswith("/image"):
                 if not self.require_authorized(True):
@@ -502,6 +549,26 @@ def make_handler(application: ReviewApplication):
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlsplit(self.path).path.rstrip("/")
+            if path == "/api/app-feedback":
+                client_ip = self.client_ip()
+                if application.limiter.limited(f"app-submit:{client_ip}", 60, 3600):
+                    self.error_response(HTTPStatus.TOO_MANY_REQUESTS, "提交过于频繁，请稍后再试")
+                    return
+                try:
+                    result = application.create_review(
+                        self.read_json(),
+                        client_ip,
+                        self.headers.get("User-Agent", ""),
+                        expected_surface="desktop",
+                    )
+                except ValueError as error:
+                    self.error_response(HTTPStatus.BAD_REQUEST, str(error))
+                    return
+                except Exception:
+                    self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "反馈保存失败")
+                    return
+                self.json_response(HTTPStatus.CREATED, result)
+                return
             if path != "/api/reviews":
                 self.error_response(HTTPStatus.NOT_FOUND, "接口不存在")
                 return

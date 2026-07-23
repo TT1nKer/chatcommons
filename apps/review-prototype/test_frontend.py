@@ -36,7 +36,8 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         self.assertIn("让社区聊天不再被单一平台锁住。", html)
         self.assertIn("Community chat without platform lock-in", html)
         self.assertIn('data-action="copy-brief"', html)
-        self.assertIn("releases/tag/v0.1.0-alpha.1", html)
+        self.assertIn("releases/tag/v0.1.0-alpha.2", html)
+        self.assertIn("data-review-only", html)
         self.assertIn("桌面 alpha 已连接真实签名聊天", html)
         self.assertIn("function openAbout()", application)
         self.assertIn("function copyProjectBrief()", application)
@@ -113,6 +114,38 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         self.assertIn("targetFor(item)", review)
         self.assertIn("position: absolute", styles)
         self.assertNotIn("position: fixed; z-index: 990", styles)
+
+    def test_review_toolbar_can_collapse_away_from_bottom_right_actions(self):
+        review = (PUBLIC / "review.js").read_text()
+        styles = (PUBLIC / "review.css").read_text()
+        localization = (PUBLIC / "i18n.js").read_text()
+        self.assertIn("data-review-collapse", review)
+        self.assertIn("function setCollapsed(value)", review)
+        self.assertIn("chatcommons-review-collapsed", review)
+        self.assertIn(".review-toolbar.is-collapsed", styles)
+        self.assertIn("bottom: 42%", styles)
+        self.assertIn("收起评审工具", localization)
+        self.assertIn("展开评审工具", localization)
+
+    def test_download_entry_is_only_revealed_after_review_authorization(self):
+        html = (PUBLIC / "index.html").read_text()
+        application = (PUBLIC / "app.js").read_text()
+        review = (PUBLIC / "review.js").read_text()
+        styles = (PUBLIC / "styles.css").read_text()
+        self.assertIn("data-review-only", html)
+        self.assertIn("data-review-only", application)
+        self.assertIn("dataset.reviewAuthorized = 'true'", review)
+        self.assertIn('[data-review-only] { display: none !important; }', styles)
+        self.assertIn('html[data-review-authorized="true"] [data-review-only]', styles)
+
+    def test_feedback_forms_scroll_and_have_no_product_character_limit(self):
+        review = (PUBLIC / "review.js").read_text()
+        styles = (PUBLIC / "review.css").read_text()
+        self.assertNotIn(
+            'name="message" required minlength="2" maxlength=', review
+        )
+        self.assertIn("max-height: calc(100vh - 32px)", styles)
+        self.assertIn("overflow: auto", styles)
 
     def test_compact_density_is_coherent_and_persistent(self):
         application = (PUBLIC / "app.js").read_text()

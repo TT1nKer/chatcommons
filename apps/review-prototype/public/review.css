@@ -1,6 +1,12 @@
 [data-review-ui] { box-sizing: border-box; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
 .review-toolbar { position: fixed; z-index: 1000; right: 18px; bottom: 18px; width: min(340px, calc(100vw - 28px)); padding: 15px; border: 1px solid rgba(255,255,255,.16); border-radius: 16px; background: #232127; color: #faf6f2; box-shadow: 0 22px 70px rgba(0,0,0,.35); font-size: 12px; line-height: 1.5; }
-.review-toolbar strong, .review-toolbar small { display: block; }.review-toolbar > strong { font-size: 13px; }.review-toolbar > small { margin-top: 4px; color: #aaa3ad; }
+.review-toolbar-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.review-toolbar-heading strong, .review-toolbar-heading small { display: block; }.review-toolbar-heading strong { font-size: 13px; }.review-toolbar-heading small { margin-top: 4px; color: #aaa3ad; }
+.review-toolbar .review-collapse { width: 30px; min-width: 30px; min-height: 30px; padding: 0; border-radius: 9px; background: #37343c; color: #e8e2e8; font-size: 16px; line-height: 1; }
+.review-toolbar.is-collapsed { right: 0; bottom: 42%; width: 38px; padding: 4px; border-radius: 12px 0 0 12px; }
+.review-toolbar.is-collapsed .review-toolbar-heading > div, .review-toolbar.is-collapsed .review-toolbar-body { display: none; }
+.review-toolbar.is-collapsed .review-toolbar-heading { display: block; }
+.review-toolbar.is-collapsed .review-collapse { width: 30px; }
 .review-appreciation { margin-top: 12px; padding: 10px 11px; border: 1px solid rgba(255,128,102,.22); border-radius: 11px; background: rgba(255,128,102,.07); }.review-appreciation summary { color: #ff9a83; cursor: pointer; font-size: 10px; font-weight: 850; letter-spacing: .02em; }.review-appreciation p { margin: 9px 0 0; color: #ddd6dd; font-size: 10px; line-height: 1.6; }.review-appreciation small { margin-top: 7px; color: #aaa3ad; font-size: 9px; line-height: 1.55; }
 .review-appreciation .credit-button { width: 100%; min-height: 32px; margin-top: 10px; font-size: 10px; }
 .review-toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

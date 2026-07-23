@@ -144,6 +144,8 @@
     '取消标注': 'Cancel annotation',
     '已有意见': 'Feedback',
     '复制审阅链接': 'Copy review link',
+    '收起评审工具': 'Collapse review tools',
+    '展开评审工具': 'Expand review tools',
     '还没有提交意见。': 'No feedback yet.',
     '布局': 'Layout',
     '文案': 'Copy',

@@ -201,7 +201,7 @@
         <div class="about-step"><span>02</span><div><strong>我们已经完成</strong><small>签名身份与事件、本地 SQLite 历史、单人邀请、QUIC 同步、可替换主服务器及备份恢复。</small></div></div>
         <div class="about-step"><span>03</span><div><strong>现在可以测试</strong><small>原生桌面 alpha 已接入协议内核，可以创建本机身份、用单人邀请加入永久测试社区并发送真实签名消息。</small></div></div>
       </div>
-      <div class="panel-links"><a href="https://github.com/TT1nKer/chatcommons/releases/tag/v0.1.0-alpha.1" target="_blank" rel="noopener noreferrer">下载桌面测试版</a><a href="https://github.com/TT1nKer/chatcommons" target="_blank" rel="noopener noreferrer">查看源代码</a><button class="secondary-action" type="button" data-copy-brief>复制项目简介</button></div>
+      <div class="panel-links"><a data-review-only href="https://github.com/TT1nKer/chatcommons/releases/tag/v0.1.0-alpha.2" target="_blank" rel="noopener noreferrer">下载桌面测试版</a><a href="https://github.com/TT1nKer/chatcommons" target="_blank" rel="noopener noreferrer">查看源代码</a><button class="secondary-action" type="button" data-copy-brief>复制项目简介</button></div>
     </section>`);
     $('[data-copy-brief]', $('#side-panel')).onclick = copyProjectBrief;
   }
