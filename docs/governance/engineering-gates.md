@@ -15,6 +15,9 @@ replace legal review.
 
 ## Gate B — before operating a relay or offline mailbox
 
+The repository's ephemeral loopback diagnostic relay does not satisfy this gate
+and must not be exposed as a public service.
+
 - service data-flow and metadata inventory are reviewed;
 - ciphertext size, recipients, retention and rate quotas are enforced;
 - expiry and deletion jobs have observable success/failure metrics;

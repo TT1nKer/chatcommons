@@ -54,6 +54,43 @@ fn stop(child: &mut Child) {
     let _ = child.wait();
 }
 
+fn line_channel(
+    stdout: impl Read + Send + 'static,
+) -> (mpsc::Receiver<io::Result<String>>, thread::JoinHandle<()>) {
+    let (sender, receiver) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    (receiver, reader)
+}
+
+fn wait_for_field(
+    receiver: &mpsc::Receiver<io::Result<String>>,
+    name: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let prefix = format!("{name}=");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(format!("timed out waiting for {name}").into());
+        }
+        match receiver.recv_timeout(remaining) {
+            Ok(Ok(line)) => {
+                if let Some(value) = line.strip_prefix(&prefix) {
+                    return Ok(value.to_owned());
+                }
+            }
+            Ok(Err(error)) => return Err(error.into()),
+            Err(error) => return Err(format!("failed waiting for {name}: {error}").into()),
+        }
+    }
+}
+
 #[test]
 fn invite_code_bootstraps_a_new_member_over_quic() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
@@ -221,5 +258,130 @@ fn invite_code_bootstraps_a_new_member_over_quic() -> Result<(), Box<dyn std::er
     let profile = resolve(&source_core.all_events()?)?;
     assert!(profile.snapshot.members.contains(&target_user));
     assert!(profile.snapshot.active_invitations.is_empty());
+    Ok(())
+}
+
+#[test]
+fn invite_bootstraps_through_relay() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let source_path = temporary.path().join("relay-source");
+    let target_path = temporary.path().join("relay-target");
+    let source_text = source_path.to_string_lossy().into_owned();
+    let target_text = target_path.to_string_lossy().into_owned();
+
+    require_success(&run_command(&["init", "--state", &source_text])?)?;
+    require_success(&run_command(&["init", "--state", &target_text])?)?;
+    let created = run_command(&[
+        "create-community",
+        "--state",
+        &source_text,
+        "--name",
+        "M2e relay invite test",
+    ])?;
+    require_success(&created)?;
+    let community_text = field(&created, "COMMUNITY_ID")?;
+
+    let socket = UdpSocket::bind("127.0.0.1:0")?;
+    let relay_port = socket.local_addr()?.port();
+    drop(socket);
+    let relay_listen = format!("/ip4/127.0.0.1/udp/{relay_port}/quic-v1");
+    let mut relay = Command::new(env!("CARGO_BIN_EXE_chatcommons-relay"))
+        .args(["--listen", &relay_listen])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let relay_stdout = relay
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("relay stdout was not captured"))?;
+    let (relay_receiver, relay_reader) = line_channel(relay_stdout);
+    let relay_peer = wait_for_field(&relay_receiver, "RELAY_PEER_ID")?;
+    let relay_address = wait_for_field(&relay_receiver, "RELAY_LISTEN_ADDRESS")?;
+    let relay_base = format!("{relay_address}/p2p/{relay_peer}");
+    let relay_route = format!("{relay_base}/p2p-circuit");
+
+    let invitation = run_command(&[
+        "create-invite",
+        "--state",
+        &source_text,
+        "--community",
+        &community_text,
+        "--address",
+        &relay_route,
+    ])?;
+    require_success(&invitation)?;
+    let invite_code = field(&invitation, "INVITE_CODE")?;
+
+    let mut source = Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
+        .args([
+            "run",
+            "--state",
+            &source_text,
+            "--community",
+            &community_text,
+            "--listen",
+            "/ip4/0.0.0.0/udp/0/quic-v1",
+            "--relay-address",
+            &relay_base,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let source_stdout = source
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("source stdout was not captured"))?;
+    let (source_receiver, source_reader) = line_channel(source_stdout);
+    let _ = wait_for_field(&source_receiver, "RELAY_RESERVATION_ACCEPTED")?;
+
+    let mut target = Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
+        .args([
+            "join",
+            "--state",
+            &target_text,
+            "--invite-code",
+            &invite_code,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        if let Some(status) = target.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            stop(&mut target);
+            stop(&mut source);
+            stop(&mut relay);
+            return Err("relay invitation bootstrap did not finish".into());
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+    let mut target_stdout = String::new();
+    let mut target_stderr = String::new();
+    target
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("target stdout was not captured"))?
+        .read_to_string(&mut target_stdout)?;
+    target
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("target stderr was not captured"))?
+        .read_to_string(&mut target_stderr)?;
+
+    stop(&mut source);
+    stop(&mut relay);
+    drop(source_receiver);
+    drop(relay_receiver);
+    let _ = source_reader.join();
+    let _ = relay_reader.join();
+
+    if !status.success() {
+        return Err(format!("relay join failed: {target_stderr}\n{target_stdout}").into());
+    }
+    assert!(target_stdout.contains("CONNECTED=") && target_stdout.contains("via=relay"));
+    assert!(target_stdout.contains("JOIN_COMPLETE="));
     Ok(())
 }

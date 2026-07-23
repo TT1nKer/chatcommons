@@ -13,6 +13,7 @@ chatcommons-crypto = { path = "../crypto" }
 chatcommons-node-core = { path = "../node-core" }
 chatcommons-profile-chat = { path = "../profile-chat" }
 chatcommons-protocol = { path = "../protocol" }
+chatcommons-relay = { path = "../relay" }
 chatcommons-storage = { path = "../storage" }
 chatcommons-sync = { path = "../sync" }
 hex.workspace = true

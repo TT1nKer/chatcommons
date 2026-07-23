@@ -31,10 +31,12 @@ Exit condition for public infrastructure is not yet met. It requires qualified
 legal review, service-specific data flows, policies, an incident runbook and
 implemented resource limits.
 
-## Explicitly deferred
+## Deferred from M1
 
 CRDT state resolution, MLS, libp2p, relays, attachments, voice, GUI, discovery,
-multi-device identity and large-community scaling are not part of M1.
+multi-device identity and large-community scaling were not part of M1. Later
+milestones may implement them independently; libp2p transport and a minimal relay
+fallback now exist in M2.
 
 Small desktop screen sharing has an accepted but deferred peer-assisted direction:
 an adaptive n-ary distribution tree with bounded voluntary upload and replaceable
@@ -92,12 +94,30 @@ not an end-user client and must not be exposed as a public service. See
 - forged capabilities and repeated redemption are rejected in a real two-process
   QUIC test
 
-Public two-machine measurement remains pending. See
+Direct-address physical measurement remains pending; the secure invitation flow
+was exercised during the M2e cross-NAT relay measurement. See
 [`ADR 0015`](adr/0015-secure-invitation-bootstrap.md).
 
-## Suggested M2e
+## M2e — relay-assisted NAT traversal (implemented locally)
 
-Measure M2d between a local client and a temporary public Linux endpoint using
-only a few text events, then remove the endpoint state. If direct QUIC is stable,
-design multiple replaceable bootstrap endpoints and hole punching before any
-relay. Do not add voice, files, discovery services or generic policy machinery.
+- direct QUIC remains the preferred path
+- a validated invite may contain one Relay v2 circuit route
+- Identify supplies observed addresses and DCUtR attempts a direct upgrade
+- the relay circuit remains usable when direct candidates fail
+- relay peers are infrastructure peers and never receive community authentication
+- the diagnostic relay enforces circuit, byte, duration and rate bounds
+- real in-process and three-process tests cover fallback and direct upgrade
+
+One physical cross-NAT measurement is complete: macOS on a phone hotspot and
+Windows/WSL on a separate home connection completed bootstrap and SQLite
+convergence over an independently operated IPFS Relay v2 peer. The direct
+candidate timed out and the relay remained the working fallback. The included
+relay still has an ephemeral identity and is not a public-service binary. See
+[`ADR 0016`](adr/0016-relay-assisted-hole-punching.md).
+
+## Suggested M2f
+
+Repeat M2e across a small NAT/firewall matrix, record direct-upgrade latency,
+success, fallback traffic and session stability, then define a replaceable relay
+selection profile. Do not add voice, files or a project-operated public relay
+until their respective engineering gates are met.

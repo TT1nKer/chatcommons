@@ -40,7 +40,8 @@ ChatCommons distinguishes five actors:
 | malicious administrators | selective history, abusive bans, false reports | signed moderation events, exportable history, report context, appeal records |
 | compromised keys | stolen device authorizes messages or moderation | M3 root/device key separation, device revocation and recovery |
 | report forgery | screenshots or edited plaintext | signed report bundle tied to original signed event; human review and appeal |
-| metadata surveillance | relay observes social graph and timing | minimize retained logs, separate services, short retention, avoid central relationship index |
+| metadata surveillance | relay observes IP addresses, Peer IDs, social graph and timing even though Noise protects the end-to-end transport stream | minimize retained logs, separate services, short retention, avoid central relationship index |
+| relay resource abuse | reservations or circuits consume sockets, bandwidth and memory | hard reservation, circuit, byte, duration and per-peer/IP rate limits; public operation remains gated |
 
 ## Product constraints for the first release
 

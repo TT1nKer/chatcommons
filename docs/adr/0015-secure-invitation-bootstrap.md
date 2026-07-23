@@ -1,6 +1,6 @@
 # ADR 0015: Secure single-endpoint invitation bootstrap
 
-Status: accepted and implemented locally; public two-machine measurement pending
+Status: accepted and implemented locally; route format extended by ADR 0016
 
 ## Context
 
@@ -22,7 +22,9 @@ package. Its `cc1_` Base64URL code contains:
 - envelope version;
 - the opaque invite package;
 - exactly one libp2p Peer ID;
-- exactly one direct QUIC multiaddress without an embedded Peer ID.
+- exactly one validated endpoint route. M2d initially allowed a direct QUIC
+  multiaddress without an embedded Peer ID; ADR 0016 additionally allows one
+  Relay v2 circuit route.
 
 The envelope is at most 8 KiB and its textual code at most 12 KiB. Parsing and
 validation remain separate. The invite package stays limited to 4 KiB. Secret
@@ -56,14 +58,14 @@ implemented in M2d.
 
 ## Consequences
 
-One copyable code is sufficient for direct joining when its packaged endpoint is
+One copyable code is sufficient for joining when its packaged endpoint route is
 reachable. A stolen code remains a bearer capability and may win redemption.
 The challenge is not an expiry or cancellation mechanism.
 
 One endpoint is intentionally a temporary availability weakness. If it is
-offline, behind an incompatible NAT, stale, or maliciously censoring, joining
-fails without changing community state. Backup endpoints, discovery, hole
-punching and replaceable relays remain later work.
+offline, stale, or maliciously censoring, joining fails without changing
+community state. ADR 0016 adds hole punching and one replaceable relay route but
+does not add backup endpoints or discovery.
 
 The diagnostic CLI passes the bearer code as a process argument and prints it to
 the terminal. This is acceptable only for development identities; a product UI

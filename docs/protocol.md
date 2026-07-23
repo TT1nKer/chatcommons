@@ -56,13 +56,17 @@ must match a cryptographically valid invitation event before an acceptance can b
 created. This package check proves correspondence, not administrator authority;
 the invitation and acceptance receive final authorization only when the profile
 resolves them with the complete community event set. Expiry, cancellation and
-contacts are deliberately deferred. M2d can wrap the unchanged package with one
-explicit direct endpoint and uses a restricted challenge flow to fetch invitation
-ancestry without granting ordinary synchronization. A community that wants
+contacts are deliberately deferred. M2d wraps the unchanged package with one
+explicit endpoint and uses a restricted challenge flow to fetch invitation
+ancestry without granting ordinary synchronization. The endpoint route is either
+direct QUIC or one Relay v2 circuit route. M2e may upgrade the latter to a direct
+connection, but route choice does not change identity, capability or profile
+validation. A community that wants
 another admission model must select or define a different profile; Core does not
 impose this policy globally. See
 [`ADR 0012`](adr/0012-single-use-bearer-invitations.md) and
-[`ADR 0015`](adr/0015-secure-invitation-bootstrap.md).
+[`ADR 0015`](adr/0015-secure-invitation-bootstrap.md), extended by
+[`ADR 0016`](adr/0016-relay-assisted-hole-punching.md).
 
 ## Resource limits
 
