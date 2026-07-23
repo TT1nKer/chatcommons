@@ -82,6 +82,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .workspace { width: min(1220px, calc(100% - 50px)); margin: 0 auto; padding: 55px 0 80px; }
 .screen[hidden] { display: none !important; }
 .kicker, .section-title p, .community-title-wrap p, .conversation-heading p, .drawer-heading p { margin: 0 0 7px; color: var(--accent); font-size: 10px; font-weight: 820; letter-spacing: .14em; text-transform: uppercase; }
+.alpha-access-banner { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 16px; padding: 15px 16px 15px 19px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 18px; background: color-mix(in srgb, var(--accent-soft) 36%, var(--surface)); box-shadow: 0 14px 40px rgba(35, 28, 35, .07); }
+.alpha-access-copy { min-width: 0; display: flex; align-items: center; gap: 18px; }
+.alpha-access-label { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; color: var(--accent-strong); font-size: 9px; font-weight: 850; letter-spacing: .13em; white-space: nowrap; }.alpha-access-label i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 13%, transparent); }
+.alpha-access-copy strong, .alpha-access-copy p { display: block; }.alpha-access-copy strong { font-size: 13px; letter-spacing: -.01em; }.alpha-access-copy p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.alpha-download-button { flex: 0 0 auto; min-height: 48px; align-items: center; gap: 15px; padding: 0 17px; border-radius: 13px; background: var(--accent); color: #fff; text-decoration: none; box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 24%, transparent); transition: transform .18s ease, box-shadow .18s ease; }.alpha-download-button:hover { transform: translateY(-2px); box-shadow: 0 16px 34px color-mix(in srgb, var(--accent) 32%, transparent); }.alpha-download-button span, .alpha-download-button small { display: block; }.alpha-download-button span { font-size: 12px; font-weight: 820; }.alpha-download-button small { color: rgba(255,255,255,.76); font-size: 9px; font-weight: 720; letter-spacing: .02em; }
 .product-brief { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr); gap: 38px; padding: clamp(28px, 4vw, 52px); overflow: hidden; border-radius: 30px; background: #17161b; color: #f8f4ef; box-shadow: 0 30px 90px rgba(30, 25, 32, .15); }
 .brief-copy { align-self: center; }.brief-copy .kicker { color: #ff8a70; }.brief-copy h1 { max-width: 780px; margin: 0; font-size: clamp(35px, 5.3vw, 72px); line-height: .98; letter-spacing: -.065em; }
 .brief-copy > p:not(.kicker) { max-width: 720px; margin: 24px 0 0; color: #bbb4be; font-size: 14px; line-height: 1.8; }
@@ -199,12 +204,17 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .app-shell[data-density="compact"] .member-list button { padding-block: 7px; }
 
 @media (max-width: 820px) {
+  .alpha-access-banner { align-items: stretch; flex-direction: column; }
+  .alpha-access-copy { align-items: flex-start; }
+  .alpha-download-button { justify-content: space-between; width: 100%; }
   .topbar { height: 64px; padding: 0 17px; }.brand small, .search-button, .quiet-button { display: none; }.workspace { width: min(100% - 28px, 680px); padding-top: 35px; }.product-brief { grid-template-columns: 1fr; gap: 26px; }.home-heading { align-items: flex-start; flex-direction: column; }.home-heading h2 { font-size: 58px; }.primary-actions { width: 100%; }.primary-actions button { flex: 1; }.community-grid { grid-template-columns: 1fr; }.community-header { flex-wrap: wrap; }.community-people { width: 100%; margin-left: 0; justify-content: space-between; }.room-strip { top: 64px; overflow-x: auto; }.room-tab { flex: 0 0 auto; }.room-browser { flex: 0 0 auto; }.member-drawer { position: fixed; z-index: 45; right: 0; bottom: 0; width: min(330px, 92vw); height: calc(100vh - 64px); min-height: 0; margin: 0; border-left: 1px solid var(--line); background: var(--surface-strong); box-shadow: -20px 0 70px rgba(0,0,0,.2); }.composer { bottom: 14px; width: calc(100% - 28px); grid-template-columns: auto minmax(0,1fr) auto; }.composer-hint { display: none; }
   .app-shell[data-density="compact"] .workspace { padding-top: 27px; }
   .app-shell[data-density="compact"] .community-card.card-featured { min-height: 210px; }
 }
 
 @media (max-width: 520px) {
+  .alpha-access-banner { padding: 16px; }
+  .alpha-access-copy { flex-direction: column; gap: 10px; }
   .workspace { width: calc(100% - 22px); }.product-brief { padding: 24px 20px; border-radius: 22px; }.brief-copy h1 { font-size: 38px; }.brief-copy > p:not(.kicker) { margin-top: 18px; }.brief-actions { display: grid; }.brief-actions button { width: 100%; }.home-heading h2 { font-size: 50px; }.community-card { grid-template-columns: 42px minmax(0,1fr); min-height: 165px; padding: 18px; border-radius: 18px; }.community-symbol { width: 42px; height: 42px; border-radius: 14px; }.community-copy strong { font-size: 19px; }.presence-stack { right: 15px; bottom: 15px; }.pulse-list time { display: none; }.community-header .community-symbol { display: none; }.presence-stack.large span { display: none; }.message-list { padding-inline: 2px; }.message { grid-template-columns: 36px minmax(0,1fr); }.message-avatar { width: 36px; height: 36px; border-radius: 12px; }.composer-add { display: none; }.composer { grid-template-columns: minmax(0,1fr) auto; }.dialog { padding: 22px; }
 }
 
