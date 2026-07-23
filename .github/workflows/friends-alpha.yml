@@ -13,7 +13,7 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -28,7 +28,7 @@ jobs:
     needs: verify
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release -p chatcommons-cli --bin chatcommons-node -p chatcommons-desktop
       - name: Package application bundle
@@ -52,7 +52,7 @@ jobs:
     needs: verify
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release -p chatcommons-cli --bin chatcommons-node -p chatcommons-desktop
       - name: Package Windows application
@@ -73,7 +73,7 @@ jobs:
     needs: verify
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release -p chatcommons-cli --bin chatcommons-node
       - name: Package Home Server binary

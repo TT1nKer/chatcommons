@@ -473,6 +473,7 @@ fn declared_home_server_relays_events_between_offline_members()
         &community_text,
     ])?;
     require_success(&invite)?;
+    let invitation_id = EventId::from_bytes(parse_id(&field(&invite, "INVITATION_ID")?)?);
     let invite_code = field(&invite, "INVITE_CODE")?;
     let uploaded_invite = run_command(&[
         "sync-home-server",
@@ -487,6 +488,19 @@ fn declared_home_server_relays_events_between_offline_members()
     ])?;
     require_success(&uploaded_invite)?;
     assert!(String::from_utf8_lossy(&uploaded_invite.stdout).contains("SYNC_COMPLETE"));
+    let invite_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if server_observer.get(invitation_id)?.is_some() {
+            break;
+        }
+        if server.has_exited()? {
+            return Err("Home Server exited before persisting the invitation".into());
+        }
+        if Instant::now() >= invite_deadline {
+            return Err("Home Server did not persist the invitation".into());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 
     let joined = run_command(&[
         "join",
