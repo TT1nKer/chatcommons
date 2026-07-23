@@ -30,7 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release -p chatcommons-cli --bin chatcommons-node -p chatcommons-desktop
+      - run: cargo build --release -p chatcommons-cli --bin chatcommons-node
+      - run: cargo build --release -p chatcommons-desktop --bin chatcommons-desktop
       - name: Package application bundle
         run: |
           set -eu
@@ -44,7 +45,7 @@ jobs:
           cp LICENSE VERSION "$app/Contents/Resources/"
           codesign --force --deep --sign - "$app"
           ditto -c -k --sequesterRsrc --keepParent "$app" ChatCommons-alpha-macOS-arm64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ChatCommons-alpha-macOS-arm64
           path: ChatCommons-alpha-macOS-arm64.zip
@@ -56,7 +57,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release -p chatcommons-cli --bin chatcommons-node -p chatcommons-desktop
+      - run: cargo build --release -p chatcommons-cli --bin chatcommons-node
+      - run: cargo build --release -p chatcommons-desktop --bin chatcommons-desktop
       - name: Package Windows application
         shell: pwsh
         run: |
@@ -67,7 +69,7 @@ jobs:
           Copy-Item apps/desktop/README.md dist/ChatCommons-alpha/DESKTOP.md
           Copy-Item LICENSE,VERSION dist/ChatCommons-alpha/
           Compress-Archive -Path dist/ChatCommons-alpha -DestinationPath ChatCommons-alpha-Windows-x64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ChatCommons-alpha-Windows-x64
           path: ChatCommons-alpha-Windows-x64.zip
@@ -89,7 +91,7 @@ jobs:
           cp deploy/README.md dist/ChatCommons-alpha-Linux-x64/SERVER.md
           cp LICENSE VERSION dist/ChatCommons-alpha-Linux-x64/
           tar -C dist -czf ChatCommons-alpha-Linux-x64.tar.gz ChatCommons-alpha-Linux-x64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ChatCommons-alpha-Linux-x64
           path: ChatCommons-alpha-Linux-x64.tar.gz
@@ -100,7 +102,7 @@ jobs:
     needs: [macos, windows, linux-server]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: ChatCommons-alpha-*
           path: dist
