@@ -25,6 +25,9 @@ These instructions apply to every agent and every file in this repository.
   from a later reviewer or a later review session.
 - Feedback controls must remain reachable in short windows and mobile
   viewports. Any form or first-use screen taller than its viewport must scroll.
+- Static CSS and JavaScript entry points must carry one shared deployment
+  revision in their URLs. Change that revision whenever any referenced asset
+  changes so a browser can never combine new HTML with week-old cached assets.
 
 ## Release checks
 

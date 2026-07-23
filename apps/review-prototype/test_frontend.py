@@ -47,16 +47,27 @@ class FrontendLocalizationContractTest(unittest.TestCase):
 
     def test_language_runtime_loads_before_interactions(self):
         html = (PUBLIC / "index.html").read_text()
-        self.assertLess(html.index('src="./i18n.js"'), html.index('src="./app.js"'))
+        self.assertLess(html.index('src="./i18n.js?v='), html.index('src="./app.js?v='))
         self.assertIn('id="language-toggle"', html)
         self.assertIn('data-action="toggle-language"', html)
+
+    def test_static_entry_assets_share_a_cache_busting_revision(self):
+        html = (PUBLIC / "index.html").read_text()
+        assets = re.findall(
+            r'(?:href|src)="\./(?:styles\.css|review\.css|i18n\.js|review\.js|app\.js)\?v=([^"]+)"',
+            html,
+        )
+        self.assertEqual(len(assets), 5)
+        self.assertEqual(len(set(assets)), 1)
+        self.assertNotIn('href="./styles.css"', html)
+        self.assertNotIn('src="./review.js"', html)
 
     def test_review_toolbar_does_not_wait_for_screenshot_library(self):
         html = (PUBLIC / "index.html").read_text()
         review = (PUBLIC / "review.js").read_text()
         self.assertNotIn('src="./vendor/html2canvas.min.js"', html)
-        self.assertLess(html.index('src="./review.js"'), html.index('src="./app.js"'))
-        self.assertIn("script.src = './vendor/html2canvas.min.js'", review)
+        self.assertLess(html.index('src="./review.js?v='), html.index('src="./app.js?v='))
+        self.assertIn("script.src = './vendor/html2canvas.min.js?v=", review)
         self.assertIn("const html2canvas = await loadScreenshotLibrary()", review)
 
     def test_locale_is_persistent_and_review_context_is_language_neutral(self):
