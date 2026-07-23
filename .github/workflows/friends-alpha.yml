@@ -39,7 +39,9 @@ jobs:
           cp target/release/chatcommons-desktop "$app/Contents/MacOS/"
           cp target/release/chatcommons-node "$app/Contents/MacOS/"
           cp apps/desktop/packaging/Info.plist "$app/Contents/"
-          cp README.md LICENSE VERSION apps/desktop/README.md "$app/Contents/Resources/"
+          cp README.md "$app/Contents/Resources/README.md"
+          cp apps/desktop/README.md "$app/Contents/Resources/DESKTOP.md"
+          cp LICENSE VERSION "$app/Contents/Resources/"
           codesign --force --deep --sign - "$app"
           ditto -c -k --sequesterRsrc --keepParent "$app" ChatCommons-alpha-macOS-arm64.zip
       - uses: actions/upload-artifact@v4
@@ -61,7 +63,9 @@ jobs:
           New-Item -ItemType Directory -Path dist/ChatCommons-alpha | Out-Null
           Copy-Item target/release/chatcommons-desktop.exe dist/ChatCommons-alpha/ChatCommons.exe
           Copy-Item target/release/chatcommons-node.exe dist/ChatCommons-alpha/chatcommons-node.exe
-          Copy-Item README.md,LICENSE,VERSION,apps/desktop/README.md dist/ChatCommons-alpha/
+          Copy-Item README.md dist/ChatCommons-alpha/README.md
+          Copy-Item apps/desktop/README.md dist/ChatCommons-alpha/DESKTOP.md
+          Copy-Item LICENSE,VERSION dist/ChatCommons-alpha/
           Compress-Archive -Path dist/ChatCommons-alpha -DestinationPath ChatCommons-alpha-Windows-x64.zip
       - uses: actions/upload-artifact@v4
         with:
@@ -81,7 +85,9 @@ jobs:
           set -eu
           mkdir -p dist/ChatCommons-alpha-Linux-x64
           cp target/release/chatcommons-node dist/ChatCommons-alpha-Linux-x64/
-          cp README.md LICENSE VERSION deploy/README.md dist/ChatCommons-alpha-Linux-x64/
+          cp README.md dist/ChatCommons-alpha-Linux-x64/README.md
+          cp deploy/README.md dist/ChatCommons-alpha-Linux-x64/SERVER.md
+          cp LICENSE VERSION dist/ChatCommons-alpha-Linux-x64/
           tar -C dist -czf ChatCommons-alpha-Linux-x64.tar.gz ChatCommons-alpha-Linux-x64
       - uses: actions/upload-artifact@v4
         with:
