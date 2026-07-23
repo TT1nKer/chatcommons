@@ -9,10 +9,14 @@ These instructions apply to every agent and every file in this repository.
 - Never add or change UI copy, onboarding, buttons, validation, errors, status
   messages, feedback text, download text, metadata, or accessibility labels
   without updating both languages in the same change.
+- Show exactly one selected language at a time unless the user explicitly asks
+  for simultaneous bilingual copy. Every visible string on the page, including
+  first-use guidance and download controls, must follow the same language
+  control.
 - Critical first-use paths such as downloading, joining by invitation,
   reporting a problem, and recovering from an error must remain understandable
-  before a user discovers the language toggle. Prefer explicit bilingual copy
-  for these entry points.
+  before a user discovers the language toggle. Keep the language control obvious
+  and accessible instead of showing both languages at once.
 - Changing the language must update already-visible and persisted status text;
   it is not sufficient to translate only newly rendered content.
 - Every UI change must extend localization tests to prove that both language
