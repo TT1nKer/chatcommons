@@ -692,7 +692,7 @@ impl NetworkNode {
         event: BehaviourEvent,
     ) -> Result<Option<NetworkEvent>, NetworkError> {
         match event {
-            BehaviourEvent::RequestResponse(event) => self.handle_request_response(event).map(Some),
+            BehaviourEvent::RequestResponse(event) => self.handle_request_response(event),
             BehaviourEvent::RelayClient(relay::client::Event::ReservationReqAccepted {
                 relay_peer_id,
                 ..
@@ -742,7 +742,7 @@ impl NetworkNode {
     fn handle_request_response(
         &mut self,
         event: request_response::Event<NetworkRequest, NetworkResponse>,
-    ) -> Result<NetworkEvent, NetworkError> {
+    ) -> Result<Option<NetworkEvent>, NetworkError> {
         match event {
             request_response::Event::Message { peer, message, .. } => match message {
                 request_response::Message::Request {
@@ -753,9 +753,9 @@ impl NetworkNode {
                             invitation,
                             acceptance,
                         } => {
-                            return self.handle_bootstrap_acceptance(
-                                peer, invitation, acceptance, channel,
-                            );
+                            return self
+                                .handle_bootstrap_acceptance(peer, invitation, acceptance, channel)
+                                .map(Some);
                         }
                         request => request,
                     };
@@ -766,33 +766,31 @@ impl NetworkNode {
                     } else if matches!(authentication, Some(AuthenticationState::Provisional)) {
                         self.start_bootstrap(peer)?;
                     }
-                    Ok(
+                    Ok(Some(
                         if matches!(authentication, Some(AuthenticationState::Full)) {
                             NetworkEvent::Authenticated(peer)
                         } else {
                             NetworkEvent::SyncProgress(peer)
                         },
-                    )
+                    ))
                 }
                 request_response::Message::Response { response, .. } => {
-                    self.handle_response(peer, response)
+                    self.handle_response(peer, response).map(Some)
                 }
             },
             request_response::Event::OutboundFailure { peer, error, .. } => {
-                Ok(NetworkEvent::RequestFailed {
+                Ok(Some(NetworkEvent::RequestFailed {
                     peer,
                     reason: error.to_string(),
-                })
+                }))
             }
             request_response::Event::InboundFailure { peer, error, .. } => {
-                Ok(NetworkEvent::RequestFailed {
+                Ok(Some(NetworkEvent::RequestFailed {
                     peer,
                     reason: error.to_string(),
-                })
+                }))
             }
-            request_response::Event::ResponseSent { peer, .. } => {
-                Ok(NetworkEvent::SyncProgress(peer))
-            }
+            request_response::Event::ResponseSent { .. } => Ok(None),
         }
     }
 

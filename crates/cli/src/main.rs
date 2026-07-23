@@ -1028,10 +1028,7 @@ async fn command_network(
         } else {
             network.next_event().await?
         };
-        let sync_progress = matches!(
-            &event,
-            NetworkEvent::Authenticated(_) | NetworkEvent::SyncProgress(_)
-        );
+        let sync_progress = matches!(&event, NetworkEvent::SyncProgress(_));
         match event {
             NetworkEvent::Listening(address) => println!("LISTEN_ADDRESS={address}"),
             NetworkEvent::Connected { peer, relayed } => {

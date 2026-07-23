@@ -484,7 +484,7 @@ fn declared_home_server_relays_events_between_offline_members()
         "--listen",
         "/ip4/127.0.0.1/udp/0/quic-v1",
         "--idle-timeout-ms",
-        "500",
+        "1500",
     ])?;
     require_success(&uploaded_invite)?;
     assert!(String::from_utf8_lossy(&uploaded_invite.stdout).contains("SYNC_COMPLETE"));

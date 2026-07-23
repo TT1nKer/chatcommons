@@ -45,6 +45,12 @@ state changes. Consumed invitations are therefore removed, and newly
 synchronized invitations become available without giving the server authority
 to invent them.
 
+One-shot desktop synchronization starts its idle-completion timer only after a
+real sync request or response has been processed. Authentication and transport
+response notifications are not sync completion signals. This prevents a client
+from disconnecting before a newly created message or invitation reaches the
+Home Server under load.
+
 ## Consequences
 
 Friends can join while the owner is offline, and the same signed invitation,
