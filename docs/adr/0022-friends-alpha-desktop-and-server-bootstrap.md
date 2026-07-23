@@ -2,6 +2,10 @@
 
 Status: accepted; friends-alpha implementation complete locally
 
+The eframe UI choice in this ADR is superseded for friend-facing product work by
+[ADR 0024](0024-single-client-ui-source.md). The sidecar and Home Server
+bootstrap decisions remain active.
+
 ## Context
 
 The protocol, diagnostic CLI and Community Home Server can already synchronize

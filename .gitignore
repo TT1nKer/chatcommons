@@ -1,5 +1,9 @@
 /target
 /.chatcommons/
+/apps/client-ui/dist/
+/apps/review-prototype/public/client/
+/apps/client-ui/node_modules/
+/apps/client-ui/*.tsbuildinfo
 
 # Local environment and secrets. Commit only documented placeholders.
 .env

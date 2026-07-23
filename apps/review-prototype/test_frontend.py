@@ -164,6 +164,30 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         self.assertIn('[data-review-only] { display: none !important; }', styles)
         self.assertIn('html[data-review-authorized="true"] [data-review-only]', styles)
 
+    def test_adjust_interface_opens_the_shared_client_ui(self):
+        html = (PUBLIC / "index.html").read_text()
+        styles = (PUBLIC / "styles.css").read_text()
+        client_package = (
+            PUBLIC.parent.parent / "client-ui" / "package.json"
+        ).read_text()
+        client_entry = (
+            PUBLIC.parent.parent / "client-ui" / "src" / "main.tsx"
+        ).read_text()
+        client_html = (
+            PUBLIC.parent.parent / "client-ui" / "index.html"
+        ).read_text()
+        localization = (PUBLIC / "i18n.js").read_text()
+
+        self.assertIn('href="./client/"', html)
+        self.assertIn("进入客户端界面", html)
+        self.assertIn("Open the client interface", localization)
+        self.assertIn("client-review-link", html)
+        self.assertIn(".client-review-link", styles)
+        self.assertIn('"build:review"', client_package)
+        self.assertIn("mountReviewOverlay", client_entry)
+        self.assertIn('id="root" data-no-i18n', client_html)
+        self.assertIn("closest?.('[data-no-i18n]')", localization)
+
     def test_feedback_forms_scroll_and_have_no_product_character_limit(self):
         review = (PUBLIC / "review.js").read_text()
         styles = (PUBLIC / "review.css").read_text()
