@@ -21,7 +21,7 @@
     if (screenshotLibraryPromise) return screenshotLibraryPromise;
     screenshotLibraryPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = './vendor/html2canvas.min.js?v=20260723.8';
+      script.src = './vendor/html2canvas.min.js?v=20260723.9';
       script.async = true;
       script.dataset.reviewUi = 'true';
       script.onload = () => window.html2canvas
