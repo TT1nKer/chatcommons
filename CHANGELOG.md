@@ -6,10 +6,19 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3] - 2026-07-23
+
 ### Changed
 
 - Moved the invited-alpha desktop download entry into a prominent bilingual
   banner while keeping access limited to authorized review links.
+
+### Fixed
+
+- Made the desktop invitation screen vertically scrollable so the join button
+  remains reachable in short windows and under enlarged display scaling.
+- Kept the desktop status line synchronized with Chinese/English language
+  changes, including empty-invitation validation.
 
 ## [0.1.0-alpha.2] - 2026-07-23
 
@@ -81,6 +90,7 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 - Voice, video, screen sharing, MLS, attachments, and production account
   recovery are not implemented.
 
-[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.2...HEAD
+[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.3...HEAD
+[0.1.0-alpha.3]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/TT1nKer/chatcommons/releases/tag/v0.1.0-alpha.1
