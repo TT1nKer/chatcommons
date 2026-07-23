@@ -36,7 +36,7 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         self.assertIn("让社区聊天不再被单一平台锁住。", html)
         self.assertIn("Community chat without platform lock-in", html)
         self.assertIn('data-action="copy-brief"', html)
-        self.assertIn("releases/tag/v0.1.0-alpha.2", html)
+        self.assertIn("releases/tag/v0.1.0-alpha.3", html)
         self.assertIn("data-review-only", html)
         self.assertIn("桌面 alpha 已连接真实签名聊天", html)
         self.assertIn("function openAbout()", application)

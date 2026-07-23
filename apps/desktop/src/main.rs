@@ -552,7 +552,10 @@ impl eframe::App for ChatCommonsApp {
                             }))
                             .clicked()
                         {
-                            self.english = !self.english;
+                            let english = !self.english;
+                            let status = localized_status(&self.status, english);
+                            self.english = english;
+                            self.status = status;
                         }
                         let status_color = if self.last_error.is_some() {
                             ACCENT
@@ -582,106 +585,120 @@ impl eframe::App for ChatCommonsApp {
 impl ChatCommonsApp {
     fn show_join(&mut self, ui: &mut egui::Ui) {
         let width = ui.available_width().min(760.0);
-        ui.add_space((ui.available_height() * 0.08).max(24.0));
-        ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new(self.text(
-                    "开源 · 社区自有 · 服务器可迁移",
-                    "OPEN SOURCE · COMMUNITY-OWNED · PORTABLE",
-                ))
-                .size(9.0)
-                .color(ACCENT)
-                .strong(),
-            );
-            ui.add_space(10.0);
-            ui.label(
-                RichText::new(self.text(
-                    "加入朋友的社区",
-                    "Join your friends’ community",
-                ))
-                .size(38.0)
-                .strong()
-                .color(INK),
-            );
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(self.text(
-                    "身份已在这台设备上创建。粘贴朋友发来的单人邀请，剩下的交给客户端。",
-                    "Your identity is ready on this device. Paste a one-person invite and the app handles the rest.",
-                ))
-                .size(13.0)
-                .color(MUTED),
-            );
-            ui.add_space(28.0);
-            egui::Frame::new()
-                .fill(SURFACE)
-                .corner_radius(22)
-                .inner_margin(24)
-                .stroke(Stroke::new(1.0, SURFACE_STRONG))
-                .show(ui, |ui| {
-                    ui.set_width(width - 48.0);
+        let viewport_height = ui.available_height();
+        egui::ScrollArea::vertical()
+            .id_salt("join-screen-scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.add_space((viewport_height * 0.08).clamp(12.0, 38.0));
+                ui.vertical_centered(|ui| {
                     ui.label(
-                        RichText::new(self.text("单人邀请", "ONE-PERSON INVITE"))
-                            .size(9.0)
-                            .color(FAINT)
-                            .strong(),
+                        RichText::new(self.text(
+                            "开源 · 社区自有 · 服务器可迁移",
+                            "OPEN SOURCE · COMMUNITY-OWNED · PORTABLE",
+                        ))
+                        .size(9.0)
+                        .color(ACCENT)
+                        .strong(),
+                    );
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(self.text(
+                            "加入朋友的社区",
+                            "Join your friends’ community",
+                        ))
+                        .size(38.0)
+                        .strong()
+                        .color(INK),
                     );
                     ui.add_space(8.0);
-                    ui.add_sized(
-                        [ui.available_width(), 118.0],
-                        egui::TextEdit::multiline(&mut self.invite_code)
-                            .hint_text("cc1_…")
-                            .font(egui::TextStyle::Monospace),
+                    ui.label(
+                        RichText::new(self.text(
+                            "身份已在这台设备上创建。粘贴朋友发来的单人邀请，剩下的交给客户端。",
+                            "Your identity is ready on this device. Paste a one-person invite and the app handles the rest.",
+                        ))
+                        .size(13.0)
+                        .color(MUTED),
                     );
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        let join_label = if self.job.is_some() {
-                            self.text("正在加入…", "Joining…")
-                        } else {
-                            self.text("加入社区 →", "Join community →")
-                        };
-                        if ui
-                            .add_enabled(
-                                self.job.is_none(),
-                                egui::Button::new(RichText::new(join_label).strong())
-                                    .fill(ACCENT)
-                                    .min_size(Vec2::new(132.0, 42.0)),
-                            )
-                            .clicked()
-                        {
-                            self.join();
-                        }
-                        ui.add_space(8.0);
+                    ui.add_space(28.0);
+                    egui::Frame::new()
+                        .fill(SURFACE)
+                        .corner_radius(22)
+                        .inner_margin(24)
+                        .stroke(Stroke::new(1.0, SURFACE_STRONG))
+                        .show(ui, |ui| {
+                            ui.set_width((width - 48.0).max(280.0));
+                            ui.label(
+                                RichText::new(self.text("单人邀请", "ONE-PERSON INVITE"))
+                                    .size(9.0)
+                                    .color(FAINT)
+                                    .strong(),
+                            );
+                            ui.add_space(8.0);
+                            ui.add_sized(
+                                [ui.available_width(), 118.0],
+                                egui::TextEdit::multiline(&mut self.invite_code)
+                                    .hint_text("cc1_…")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                let join_label = if self.job.is_some() {
+                                    self.text("正在加入…", "Joining…")
+                                } else {
+                                    self.text("加入社区 →", "Join community →")
+                                };
+                                if ui
+                                    .add_enabled(
+                                        self.job.is_none(),
+                                        egui::Button::new(RichText::new(join_label).strong())
+                                            .fill(ACCENT)
+                                            .min_size(Vec2::new(132.0, 42.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    self.join();
+                                }
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new(self.text(
+                                        "邀请只供一个人使用",
+                                        "Each invite is for one person",
+                                    ))
+                                    .size(10.0)
+                                    .color(FAINT),
+                                );
+                            });
+                        });
+                    if !self.snapshot.user_id.is_empty() {
+                        ui.add_space(18.0);
                         ui.label(
-                            RichText::new(self.text(
-                                "邀请只供一个人使用",
-                                "Each invite is for one person",
+                            RichText::new(format!(
+                                "{} · {}",
+                                self.text("本机身份", "Local identity"),
+                                short_id(&self.snapshot.user_id)
                             ))
                             .size(10.0)
                             .color(FAINT),
                         );
-                    });
+                    }
+                    ui.add_space(12.0);
+                    if ui
+                        .link(
+                            RichText::new(self.text(
+                                "遇到问题？发送反馈",
+                                "Something wrong? Send feedback",
+                            ))
+                            .color(MUTED),
+                        )
+                        .clicked()
+                    {
+                        self.open_feedback();
+                    }
+                    ui.add_space(18.0);
                 });
-            if !self.snapshot.user_id.is_empty() {
-                ui.add_space(18.0);
-                ui.label(
-                    RichText::new(format!(
-                        "{} · {}",
-                        self.text("本机身份", "Local identity"),
-                        short_id(&self.snapshot.user_id)
-                    ))
-                    .size(10.0)
-                    .color(FAINT),
-                );
-            }
-            ui.add_space(12.0);
-            if ui
-                .link(RichText::new(self.text("遇到问题？发送反馈", "Something wrong? Send feedback")).color(MUTED))
-                .clicked()
-            {
-                self.open_feedback();
-            }
-        });
+            });
     }
 
     fn show_chat(&mut self, ui: &mut egui::Ui) {
@@ -1532,6 +1549,38 @@ fn feedback_status_text(status: &str, english: bool) -> &'static str {
     }
 }
 
+fn localized_status(status: &str, english: bool) -> String {
+    const STATUS_PAIRS: &[(&str, &str)] = &[
+        ("正在准备本地身份……", "Preparing local identity…"),
+        ("社区服务器暂不可达", "Home Server unavailable"),
+        ("已同步", "Synchronized"),
+        (
+            "已在本地显示 · 正在同步……",
+            "Saved locally · synchronizing…",
+        ),
+        ("正在同步……", "Synchronizing…"),
+        (
+            "操作失败 · 可在“反馈与问题”查看详情",
+            "Operation failed · open Feedback for details",
+        ),
+        ("请先粘贴邀请", "Paste an invite first"),
+        ("正在加入……", "Joining…"),
+        ("没有可用频道", "No channel is available"),
+        ("正在保存消息……", "Saving message…"),
+    ];
+    STATUS_PAIRS
+        .iter()
+        .find(|(chinese, english_text)| status == *chinese || status == *english_text)
+        .map(|(chinese, english_text)| {
+            if english {
+                (*english_text).to_owned()
+            } else {
+                (*chinese).to_owned()
+            }
+        })
+        .unwrap_or_else(|| status.to_owned())
+}
+
 fn install_system_cjk_font(context: &egui::Context) {
     let candidates = if cfg!(target_os = "macos") {
         vec!["/System/Library/Fonts/PingFang.ttc"]
@@ -1626,6 +1675,22 @@ mod tests {
     #[test]
     fn identifiers_are_shortened_for_display_only() {
         assert_eq!(short_id("0123456789abcdef"), "0123456789");
+    }
+
+    #[test]
+    fn persisted_status_text_follows_language_toggle() {
+        assert_eq!(
+            localized_status("请先粘贴邀请", true),
+            "Paste an invite first"
+        );
+        assert_eq!(
+            localized_status("Paste an invite first", false),
+            "请先粘贴邀请"
+        );
+        assert_eq!(
+            localized_status("custom diagnostic", true),
+            "custom diagnostic"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # ChatCommons
 
-Current product version: `0.1.0-alpha.2` (friends-and-contributors alpha).
+Current product version: `0.1.0-alpha.3` (friends-and-contributors alpha).
 Product releases, wire protocol versions, storage schema versions, and server
 deployment revisions are versioned independently. See
 [docs/versioning.md](docs/versioning.md).
