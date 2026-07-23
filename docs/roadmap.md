@@ -7,7 +7,7 @@
 - parsing separated from cryptographic validation
 - idempotent SQLite persistence and recovery
 - unordered parent ingestion and concurrent DAG branches
-- one optional `chatcommons.chat.v1` reference profile
+- one optional reference chat profile, advanced to `chatcommons.chat.v2` in M3a
 
 ## M1.1 — single-use invitation capability (implemented)
 
@@ -115,9 +115,82 @@ candidate timed out and the relay remained the working fallback. The included
 relay still has an ephemeral identity and is not a public-service binary. See
 [`ADR 0016`](adr/0016-relay-assisted-hole-punching.md).
 
+## M3a — replaceable community home-server declaration (implemented)
+
+- one logical default home-server binding per community
+- owner-only signed replacement without old-server or official approval
+- server identity derived independently from the genesis-derived Community ID
+- bounded endpoint hints and DAG-parent history checkpoints
+- deterministic concurrent migration resolution without timestamp precedence
+- no production server, discovery service, backup, attachment or migration tool
+
+See [`ADR 0017`](adr/0017-replaceable-community-home-server.md).
+
+## M3b — minimal authenticated Community Home Server (implemented locally)
+
+- diagnostic `set-home-server` and `serve-community` commands
+- exact binding between the signed server key, device certificate and Peer ID
+- server operator remains outside community membership and governance
+- SQLite persistence and later delivery between members that are never online together
+- live membership and server-binding authorization refresh after synchronization
+- rejection of undeclared server devices and fail-closed behavior after migration
+- no production operations, discovery, export/import, quotas, attachments or backup automation
+
+See [`ADR 0018`](adr/0018-minimal-community-home-server.md).
+
+## M3c — portable provisioning and declared dialing (implemented locally)
+
+- bounded deterministic Community Archive v1 with parent-closure validation
+- idempotent export/import without identity or device secrets
+- topologically batched SQLite import under existing ingestion limits
+- automatic Peer ID and Multiaddr selection from signed Home Server state
+- real export/import/serve/offline-member integration coverage
+- no encrypted, incremental or attachment backup; no scheduler or object store
+
+See
+[`ADR 0019`](adr/0019-bounded-community-archives-and-declared-dialing.md).
+
+## M3d — private Home Server runtime boundaries (implemented locally)
+
+- one private advisory process lock per node state
+- bounded logical event-body storage, including unresolved sync events
+- configurable 512 MiB default Home Server quota
+- least-privilege systemd template with per-instance state directories
+- loopback-first deployment guidance that leaves firewall and cloud rules unchanged
+- no claim of public-service readiness or filesystem-level quota enforcement
+
+See
+[`ADR 0020`](adr/0020-private-home-server-runtime-boundaries.md).
+
+## M3e — private Home Server snapshot and recovery (implemented locally)
+
+- root-only, bounded snapshot directories with atomic completion
+- consistent stopped-service event export plus server identity and runtime config
+- restart-on-success-or-failure behavior for instances stopped by backup
+- checksum, identity and full archive validation during restore
+- fail-closed restore into a new state without overwriting an existing instance
+- no provider lock-in, upload, encryption, retention schedule or automatic deletion
+
+See
+[`ADR 0021`](adr/0021-private-server-snapshots.md).
+
 ## Suggested M2f
 
 Repeat M2e across a small NAT/firewall matrix, record direct-upgrade latency,
 success, fallback traffic and session stability, then define a replaceable relay
 selection profile. Do not add voice, files or a project-operated public relay
 until their respective engineering gates are met.
+
+## M4a — friends-alpha text client (implemented locally)
+
+- native Chinese/English desktop shell for macOS and Windows
+- automatic test identity initialization in the platform application-data path
+- one-community invite, channel, signed-message and history workflow
+- bounded one-shot Home Server synchronization for interactive clients
+- Home Server bootstrap derived from its signed declaration
+- dynamic removal and addition of single-use bootstrap grants
+- macOS arm64 and Windows x64 artifact workflow
+- no recovery, multi-device identity, trusted code signing, attachments, voice,
+  automatic update or public-service readiness
+
+See [`ADR 0022`](adr/0022-friends-alpha-desktop-and-server-bootstrap.md).

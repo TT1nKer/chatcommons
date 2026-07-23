@@ -64,6 +64,10 @@ pub enum SyncError {
     Protocol(#[from] chatcommons_protocol::ProtocolError),
     #[error("node operation failed: {0}")]
     Node(#[from] NodeError),
+    #[error("storage quota must be greater than zero")]
+    InvalidStorageQuota,
+    #[error("stored events would exceed the {limit}-byte storage quota")]
+    StorageQuotaExceeded { limit: u64 },
 }
 
 pub fn parse_json(bytes: &[u8]) -> Result<ParsedSyncMessage, SyncError> {
@@ -135,6 +139,7 @@ pub struct SyncPeer {
     node: CoreNode,
     community: CommunityId,
     pending: BTreeMap<EventId, SignedEvent>,
+    max_stored_event_bytes: Option<u64>,
 }
 
 impl SyncPeer {
@@ -146,7 +151,19 @@ impl SyncPeer {
             node,
             community,
             pending: BTreeMap::new(),
+            max_stored_event_bytes: None,
         })
+    }
+
+    pub fn with_storage_quota(mut self, max_bytes: u64) -> Result<Self, SyncError> {
+        if max_bytes == 0 {
+            return Err(SyncError::InvalidStorageQuota);
+        }
+        if self.node.stored_event_bytes()? > max_bytes {
+            return Err(SyncError::StorageQuotaExceeded { limit: max_bytes });
+        }
+        self.max_stored_event_bytes = Some(max_bytes);
+        Ok(self)
     }
 
     pub fn hello(&self) -> SyncMessage {
@@ -237,6 +254,22 @@ impl SyncPeer {
         if self.pending.len() + new_ids.len() > MAX_PENDING_SYNC_EVENTS {
             return Err(SyncError::ItemLimitExceeded);
         }
+        if let Some(limit) = self.max_stored_event_bytes {
+            let stored = self.node.stored_event_bytes()?;
+            let pending = encoded_event_bytes(self.pending.values())?;
+            let incoming = encoded_event_bytes(
+                events
+                    .iter()
+                    .filter(|event| new_ids.contains(&event.event_id)),
+            )?;
+            let projected = stored
+                .checked_add(pending)
+                .and_then(|bytes| bytes.checked_add(incoming))
+                .ok_or(SyncError::StorageQuotaExceeded { limit })?;
+            if projected > limit {
+                return Err(SyncError::StorageQuotaExceeded { limit });
+            }
+        }
         for event in events {
             if new_ids.contains(&event.event_id) {
                 self.pending.entry(event.event_id).or_insert(event);
@@ -265,6 +298,16 @@ impl SyncPeer {
         }
         Ok(want_messages(self.community, missing.into_iter().collect()))
     }
+}
+
+fn encoded_event_bytes<'a>(
+    mut events: impl Iterator<Item = &'a SignedEvent>,
+) -> Result<u64, SyncError> {
+    events.try_fold(0_u64, |total, event| {
+        let bytes =
+            u64::try_from(serde_json::to_vec(event)?.len()).map_err(|_| SyncError::TooLarge)?;
+        total.checked_add(bytes).ok_or(SyncError::TooLarge)
+    })
 }
 
 fn message_community(message: &SyncMessage) -> CommunityId {

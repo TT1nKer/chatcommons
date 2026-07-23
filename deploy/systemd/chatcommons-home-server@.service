@@ -1,0 +1,39 @@
+[Unit]
+Description=ChatCommons Community Home Server (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chatcommons
+Group=chatcommons
+EnvironmentFile=/etc/chatcommons/%i.env
+ExecStart=/opt/chatcommons/bin/chatcommons-node serve-community --state /var/lib/chatcommons/%i --community ${CHATCOMMONS_COMMUNITY_ID} --listen ${CHATCOMMONS_LISTEN} --max-store-bytes ${CHATCOMMONS_MAX_STORE_BYTES}
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+StateDirectory=chatcommons/%i
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/chatcommons/%i
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+# libp2p enumerates local interfaces through NETLINK_ROUTE before binding QUIC.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=4096
+TasksMax=128
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

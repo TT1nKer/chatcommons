@@ -1,3 +1,5 @@
+pub mod archive;
+
 use chatcommons_protocol::{CommunityId, EventId, SignedEvent, validate_event};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
@@ -17,6 +19,8 @@ pub enum StorageError {
     Corrupt(#[from] serde_json::Error),
     #[error("event failed protocol validation: {0}")]
     Protocol(#[from] chatcommons_protocol::ProtocolError),
+    #[error("stored event byte count is invalid")]
+    InvalidStoredSize,
 }
 
 pub struct EventStore {
@@ -50,6 +54,15 @@ impl EventStore {
             .connection
             .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?;
         Ok(count == 0)
+    }
+
+    pub fn stored_event_bytes(&self) -> Result<u64, StorageError> {
+        let bytes: i64 = self.connection.query_row(
+            "SELECT COALESCE(SUM(length(body)), 0) FROM events",
+            [],
+            |row| row.get(0),
+        )?;
+        u64::try_from(bytes).map_err(|_| StorageError::InvalidStoredSize)
     }
 
     pub fn get(&self, id: EventId) -> Result<Option<SignedEvent>, StorageError> {

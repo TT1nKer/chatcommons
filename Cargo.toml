@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "apps/desktop",
     "crates/cli",
     "crates/crypto",
     "crates/protocol",
@@ -12,12 +13,13 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 futures = "0.3"
@@ -29,4 +31,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tempfile = "3"
+directories = "6"
+eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

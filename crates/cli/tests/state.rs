@@ -1,4 +1,4 @@
-use chatcommons_cli::{IDENTITY_FILE, NodeState, StateError};
+use chatcommons_cli::{IDENTITY_FILE, LOCK_FILE, NodeState, StateError};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -40,5 +40,28 @@ fn insecure_identity_permissions_are_rejected() -> Result<(), Box<dyn std::error
         NodeState::load(&directory),
         Err(StateError::InsecurePermissions)
     ));
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn state_lock_is_private_exclusive_and_reusable() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let directory = temporary.path().join("node");
+    let state = NodeState::initialize(&directory)?;
+    let first = state.acquire_lock()?;
+
+    assert!(matches!(
+        NodeState::load(&directory)?.acquire_lock(),
+        Err(StateError::AlreadyInUse)
+    ));
+    let lock_mode = std::fs::metadata(directory.join(LOCK_FILE))?
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(lock_mode, 0o600);
+
+    drop(first);
+    let _second = state.acquire_lock()?;
     Ok(())
 }

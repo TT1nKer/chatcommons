@@ -1,0 +1,140 @@
+#!/bin/sh
+set -eu
+umask 077
+
+NODE=/opt/chatcommons/bin/chatcommons-node
+STATE_ROOT=/var/lib/chatcommons
+CONFIG_ROOT=/etc/chatcommons
+UNIT_PREFIX=chatcommons-home-server@
+MAX_IDENTITY_BYTES=4096
+MAX_ARCHIVE_BYTES=67108864
+MAX_ENVIRONMENT_BYTES=16384
+MAX_METADATA_BYTES=4096
+
+fail() {
+    printf 'error: %s\n' "$1" >&2
+    exit 1
+}
+
+valid_instance() {
+    case "$1" in
+        ''|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*) return 1 ;;
+    esac
+    [ "${#1}" -le 64 ]
+}
+
+manifest_value() {
+    name=$1
+    file=$2
+    count=$(grep -c "^$name=" "$file" || true)
+    [ "$count" -eq 1 ] || fail "snapshot manifest has an invalid $name field"
+    sed -n "s/^$name=//p" "$file"
+}
+
+[ "$(id -u)" -eq 0 ] || fail "restore must run as root"
+if [ "$#" -eq 2 ]; then
+    start=0
+elif [ "$#" -eq 3 ] && [ "$3" = --start ]; then
+    start=1
+else
+    fail "usage: chatcommons-restore <snapshot-directory> <new-instance> [--start]"
+fi
+
+snapshot=$1
+instance=$2
+valid_instance "$instance" || fail "instance name is invalid"
+[ -x "$NODE" ] || fail "ChatCommons node is not installed"
+[ -d "$snapshot" ] && [ ! -L "$snapshot" ] || fail "snapshot directory is missing or unsafe"
+[ "$(stat -c '%u:%g' "$snapshot")" = 0:0 ] \
+    || fail "snapshot directory must be owned by root"
+[ "$(stat -c '%a' "$snapshot")" = 700 ] \
+    || fail "snapshot directory must have mode 0700"
+
+for name in manifest SHA256SUMS identity.json community.ccarchive service.env; do
+    [ -f "$snapshot/$name" ] && [ ! -L "$snapshot/$name" ] \
+        || fail "snapshot file $name is missing or unsafe"
+    [ "$(stat -c '%u:%g' "$snapshot/$name")" = 0:0 ] \
+        || fail "snapshot file $name must be owned by root"
+    [ "$(stat -c '%a' "$snapshot/$name")" = 600 ] \
+        || fail "snapshot file $name must have mode 0600"
+done
+[ "$(stat -c '%s' "$snapshot/identity.json")" -le "$MAX_IDENTITY_BYTES" ] \
+    || fail "snapshot identity exceeds its size limit"
+[ "$(stat -c '%s' "$snapshot/community.ccarchive")" -le "$MAX_ARCHIVE_BYTES" ] \
+    || fail "snapshot archive exceeds its size limit"
+[ "$(stat -c '%s' "$snapshot/service.env")" -le "$MAX_ENVIRONMENT_BYTES" ] \
+    || fail "snapshot environment exceeds its size limit"
+[ "$(stat -c '%s' "$snapshot/manifest")" -le "$MAX_METADATA_BYTES" ] \
+    || fail "snapshot manifest exceeds its size limit"
+[ "$(stat -c '%s' "$snapshot/SHA256SUMS")" -le "$MAX_METADATA_BYTES" ] \
+    || fail "snapshot checksum list exceeds its size limit"
+
+[ "$(wc -l < "$snapshot/manifest")" -eq 4 ] \
+    || fail "snapshot manifest must contain exactly four fields"
+[ "$(wc -l < "$snapshot/SHA256SUMS")" -eq 3 ] \
+    || fail "snapshot checksum list must contain exactly three entries"
+for name in identity.json community.ccarchive service.env; do
+    count=$(grep -Ec "^[0-9a-f]{64}  $name$" "$snapshot/SHA256SUMS" || true)
+    [ "$count" -eq 1 ] || fail "snapshot checksum entry for $name is invalid"
+done
+
+(
+    cd "$snapshot"
+    sha256sum --check --strict SHA256SUMS >/dev/null
+) || fail "snapshot checksum validation failed"
+
+version=$(manifest_value SNAPSHOT_VERSION "$snapshot/manifest")
+[ "$version" = 1 ] || fail "snapshot version is unsupported"
+snapshot_instance=$(manifest_value INSTANCE "$snapshot/manifest")
+valid_instance "$snapshot_instance" || fail "snapshot manifest instance is invalid"
+community=$(manifest_value COMMUNITY_ID "$snapshot/manifest")
+printf '%s\n' "$community" | grep -Eq '^[0-9a-f]{64}$' \
+    || fail "snapshot Community ID is invalid"
+created_at=$(manifest_value CREATED_AT "$snapshot/manifest")
+printf '%s\n' "$created_at" | grep -Eq '^[0-9]{8}T[0-9]{6}Z$' \
+    || fail "snapshot creation time is invalid"
+environment_count=$(grep -c '^CHATCOMMONS_COMMUNITY_ID=' "$snapshot/service.env" || true)
+[ "$environment_count" -eq 1 ] || fail "snapshot environment has an invalid Community ID"
+environment_community=$(sed -n 's/^CHATCOMMONS_COMMUNITY_ID=//p' "$snapshot/service.env")
+[ "$environment_community" = "$community" ] \
+    || fail "manifest and service environment Community IDs differ"
+
+state=$STATE_ROOT/$instance
+environment=$CONFIG_ROOT/$instance.env
+unit=$UNIT_PREFIX$instance.service
+test ! -e "$state" || fail "target state already exists"
+test ! -e "$environment" || fail "target environment already exists"
+
+partial=$STATE_ROOT/.$instance-restore-$$
+test ! -e "$partial" || fail "temporary restore state already exists"
+cleanup() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ -n "${partial:-}" ] && [ -d "$partial" ]; then
+        rm -rf -- "$partial"
+    fi
+    exit "$status"
+}
+trap cleanup EXIT HUP INT TERM
+
+install -o chatcommons -g chatcommons -m 0700 -d "$partial"
+install -o chatcommons -g chatcommons -m 0600 \
+    "$snapshot/identity.json" "$partial/identity.json"
+install -o chatcommons -g chatcommons -m 0600 \
+    "$snapshot/community.ccarchive" "$partial/restore.ccarchive"
+runuser -u chatcommons -- "$NODE" info --state "$partial" >/dev/null
+runuser -u chatcommons -- "$NODE" import-community \
+    --state "$partial" \
+    --input "$partial/restore.ccarchive" >/dev/null
+rm -f "$partial/restore.ccarchive"
+mv "$partial" "$state"
+partial=
+install -o root -g root -m 0600 "$snapshot/service.env" "$environment"
+
+if [ "$start" -eq 1 ]; then
+    systemctl start "$unit"
+fi
+
+printf 'RESTORED_INSTANCE=%s\n' "$instance"
+printf 'COMMUNITY_ID=%s\n' "$community"
+printf 'SERVICE_STATE=%s\n' "$(systemctl is-active "$unit" 2>/dev/null || true)"

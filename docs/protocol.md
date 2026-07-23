@@ -31,13 +31,14 @@ reference the same parent; both branches remain valid facts.
 whose parents are present, and stores them idempotently. It does not decide whether
 an author is allowed to perform an application action.
 
-`chatcommons-profile-chat` is the single reference profile. It currently demonstrates
+`chatcommons-profile-chat` is the single reference profile. Its current
+`chatcommons.chat.v2` version demonstrates
 community creation, invitations, membership, text channels, messages, one owner,
-and administrators. Its deterministic resolver is application policy, not a
-universal governance engine. Other applications may define different profiles
-without changing Core.
+administrators, and an owner-selected replaceable community home server. Its
+deterministic resolver is application policy, not a universal governance engine.
+Other applications may define different profiles without changing Core.
 
-The default admission rule in `chatcommons.chat.v1` is community-initiated only.
+The default admission rule in `chatcommons.chat.v2` is community-initiated only.
 There is no join-request event. An administrator invitation publishes a fresh
 Ed25519 capability public key. The corresponding private capability exists only
 in a bounded invite package shared by link, QR code, or another out-of-band
@@ -67,6 +68,45 @@ impose this policy globally. See
 [`ADR 0012`](adr/0012-single-use-bearer-invitations.md) and
 [`ADR 0015`](adr/0015-secure-invitation-bootstrap.md), extended by
 [`ADR 0016`](adr/0016-relay-assisted-hole-punching.md).
+
+## Replaceable community home server
+
+The reference profile accepts an owner-authored `chat.home-server.set` event with
+one bounded server public key and a bounded list of endpoint hints. Its accepted
+DAG parents are the history checkpoint; timestamps do not grant migration
+precedence. The projected Home Server ID is derived from the server key and is
+independent of Community ID.
+
+The selected server is a default availability and discovery endpoint, not a
+community authority. A server operator cannot redirect the community unless it
+also holds the current owner identity. A valid replacement needs neither the old
+server's approval nor an official ChatCommons record. Finding the replacement is
+separate from validating it: members, invites, announcements, the new server, or
+replaceable directories must carry the signed declaration. See
+[`ADR 0017`](adr/0017-replaceable-community-home-server.md).
+
+The diagnostic QUIC implementation treats the declared server public key as one
+exact libp2p device key. Clients admit that device for synchronization without
+making its operator a community member. `serve-community` verifies the inverse:
+its local key must still be the current declaration. Member and infrastructure
+authorization are recomputed after synchronization so removals and migrations
+do not leave stale access. See
+[`ADR 0018`](adr/0018-minimal-community-home-server.md).
+
+A signed Core event whose chat payload is malformed or mismatched is retained as
+a candidate but receives the deterministic `InvalidPayload` profile rejection.
+Its failure does not erase the valid projection or make a network node exit.
+
+## Portable community archive
+
+The diagnostic archive is a bounded, deterministic operational container for a
+parent-closed signed Core DAG. It requires one matching genesis, strictly sorted
+and unique events, correct community attribution, and no missing parents. It
+cannot prove that an exporter omitted no independent branch. The outer file
+grants no authority and contains no identity keys; every event is verified
+normally before import. `sync-home-server` derives both Peer ID and address from
+the accepted Home Server binding. See
+[`ADR 0019`](adr/0019-bounded-community-archives-and-declared-dialing.md).
 
 ## Resource limits
 

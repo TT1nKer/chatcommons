@@ -1,24 +1,50 @@
 # ChatCommons
 
+Current product version: `0.1.0-alpha.2` (friends-and-contributors alpha).
+Product releases, wire protocol versions, storage schema versions, and server
+deployment revisions are versioned independently. See
+[docs/versioning.md](docs/versioning.md).
+
 ChatCommons is an open, offline-first protocol for community-owned chat. Its
 goal is simple: your community, your rules, your chat. The current workspace
 contains protocol v2, one deliberately small reference chat profile, single-use
 bearer invitations, secure invitation bootstrap, direct QUIC synchronization,
-and relay-assisted hole punching. It contains no hosted service, release binary,
-voice implementation, or GUI.
+relay-assisted hole punching, and an owner-signed replaceable home-server
+declaration with a bounded diagnostic authenticated Home Server process. The
+workspace now also contains a minimal native friends-alpha text client. It
+contains no production hosted service, trusted release binary, voice
+implementation, account recovery or multi-device identity.
+
+## Friends-alpha preview
+
+The current native client is an intentionally small friends alpha: it creates a
+local test identity, joins a community with a one-person invitation, shows
+validated signed messages, and sends text through the replaceable Community
+Home Server. These screenshots are development captures and will change.
+
+| Join from an invitation | Signed community chat |
+| --- | --- |
+| ![ChatCommons invitation screen](docs/assets/screenshots/desktop-join-alpha.png) | ![ChatCommons community chat](docs/assets/screenshots/desktop-community-alpha.png) |
+
+![ChatCommons private in-app feedback form](docs/assets/screenshots/desktop-feedback-alpha.png)
+
+The in-app feedback form sends user-reviewed text and an optional,
+explicitly-captured app-window screenshot to the private ChatCommons feedback
+inbox. It does not require or create a public GitHub issue.
 
 ## Workspace
 
 - `chatcommons-crypto`: Ed25519 identities and byte-level verification
-- `chatcommons-cli`: Unix-only M2c-M2e diagnostic executables
+- `chatcommons-cli`: Unix-only M2c-M3d diagnostic executables
 - `chatcommons-protocol`: opaque signed envelopes, canonical encoding, parsing and IDs
 - `chatcommons-storage`: idempotent SQLite event persistence
 - `chatcommons-node-core`: generic DAG validation and local ingestion
-- `chatcommons-profile-chat`: the optional `chatcommons.chat.v1` reference semantics
+- `chatcommons-profile-chat`: the optional `chatcommons.chat.v2` reference semantics
 - `chatcommons-sync`: bounded DAG synchronization over direct or relayed connections
 - `chatcommons-relay`: bounded, ephemeral development Circuit Relay v2 node
+- `apps/desktop`: minimal Chinese/English friends-alpha desktop client
 
-## M2c-M2e diagnostic node
+## M2c-M3d diagnostic node
 
 The current executable is a developer connectivity tool, not an end-user client.
 It persists plaintext development keys only on Unix, with a `0700` state
@@ -56,8 +82,9 @@ cargo run --bin chatcommons-node -- join \
 
 The code contains a bearer secret and the diagnostic CLI exposes it in terminal
 and process arguments. Use development identities only. The command has no
-discovery, production relay configuration or process lock. Run one process per
-state directory and restrict the diagnostic listener to a test environment. See
+discovery or production relay configuration. Mutating and long-running commands
+hold an advisory per-state process lock; restrict the diagnostic listener to a
+test environment. See
 [ADR 0014](docs/adr/0014-m2c-diagnostic-node.md) and
 [ADR 0015](docs/adr/0015-secure-invitation-bootstrap.md).
 
@@ -77,6 +104,75 @@ attempt fails, the bounded relay circuit remains the fallback. The relay binary
 has an ephemeral identity, no persistence and no production operating controls.
 Do not expose it publicly. See
 [ADR 0016](docs/adr/0016-relay-assisted-hole-punching.md).
+
+## Diagnostic Community Home Server
+
+Initialize a separate server state and copy its printed device key into an
+owner-signed declaration:
+
+```sh
+cargo run --bin chatcommons-node -- init --state <server-directory>
+
+cargo run --bin chatcommons-node -- set-home-server \
+  --state <owner-directory> \
+  --community <community-id> \
+  --server-public-key <DEVICE_PUBLIC_KEY> \
+  --endpoint /ip4/<server-ip>/udp/4001/quic-v1
+```
+
+Export the locally known, parent-closed signed community DAG, transfer the file
+through an operator-controlled channel, and import it into the separately
+initialized server state:
+
+```sh
+cargo run --bin chatcommons-node -- export-community \
+  --state <owner-directory> \
+  --community <community-id> \
+  --output <community.ccarchive>
+
+cargo run --bin chatcommons-node -- import-community \
+  --state <server-directory> \
+  --input <community.ccarchive>
+```
+
+The archive contains signed community events in plaintext but no user or server
+identity seeds. The CLI creates it as a new `0600` file on Unix and refuses to
+overwrite an existing path. Protect and remove operational copies according to
+your own retention policy.
+
+Start the persistent role:
+
+```sh
+cargo run --bin chatcommons-node -- serve-community \
+  --state <server-directory> \
+  --community <community-id> \
+  --listen /ip4/0.0.0.0/udp/4001/quic-v1 \
+  --max-store-bytes 536870912
+```
+
+A member whose database already contains the signed declaration can derive the
+server Peer ID and select its declared Multiaddr automatically:
+
+```sh
+cargo run --bin chatcommons-node -- sync-home-server \
+  --state <member-directory> \
+  --community <community-id> \
+  --listen /ip4/0.0.0.0/udp/0/quic-v1
+```
+
+Clients that know the declaration authenticate this exact server device without
+making its operator a community member. The server accepts current members,
+persists signed events in SQLite, and serves them when other members later come
+online. It has a logical event-body storage quota, an exclusive state lock, a
+least-privilege systemd template and operator-driven snapshot/restore scripts for
+private Linux testing. It still has no per-peer persistent rate limit, scheduled
+off-host backup, monitoring, endpoint discovery or attachment storage; do not
+expose it as a public service. See
+[ADR 0018](docs/adr/0018-minimal-community-home-server.md) and
+[ADR 0019](docs/adr/0019-bounded-community-archives-and-declared-dialing.md),
+[ADR 0020](docs/adr/0020-private-home-server-runtime-boundaries.md),
+[ADR 0021](docs/adr/0021-private-server-snapshots.md) and the
+[private deployment guide](deploy/README.md).
 
 The fallback path has also completed a physical cross-NAT measurement between a
 macOS hotspot client and Windows/WSL on a separate home connection. The direct

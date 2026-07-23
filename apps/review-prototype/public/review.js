@@ -1,0 +1,567 @@
+(function () {
+  'use strict';
+  const params = new URLSearchParams(location.search);
+  const incoming = params.get('review');
+  if (incoming) {
+    sessionStorage.setItem('chatcommons-review-token', incoming);
+    params.delete('review');
+    const query = params.toString();
+    history.replaceState({}, document.title, `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+  }
+  const token = sessionStorage.getItem('chatcommons-review-token');
+  if (!token || token.length < 40) return;
+
+  const $ = (selector, parent = document) => parent.querySelector(selector);
+  const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
+  const l = (chinese, english) => window.chatcommonsI18n.pick(chinese, english);
+  let screenshotLibraryPromise;
+
+  function loadScreenshotLibrary() {
+    if (window.html2canvas) return Promise.resolve(window.html2canvas);
+    if (screenshotLibraryPromise) return screenshotLibraryPromise;
+    screenshotLibraryPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = './vendor/html2canvas.min.js';
+      script.async = true;
+      script.dataset.reviewUi = 'true';
+      script.onload = () => window.html2canvas
+        ? resolve(window.html2canvas)
+        : reject(new Error('Screenshot library did not initialize'));
+      script.onerror = () => reject(new Error('Screenshot library could not be loaded'));
+      document.head.appendChild(script);
+    });
+    return screenshotLibraryPromise;
+  }
+
+  const editStorageKey = 'chatcommons-review-edit-tokens-v1';
+  function loadEditTokens() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(editStorageKey) || '{}');
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (_) { return {}; }
+  }
+  const state = {
+    selecting: false,
+    collapsed: localStorage.getItem('chatcommons-review-collapsed') === 'true',
+    highlighted: null,
+    reviews: [],
+    markerItems: new Map(),
+    markerFrame: 0,
+    editTokens: loadEditTokens(),
+  };
+  const statuses = {
+    pending: ['待确认', 'Pending'],
+    in_progress: ['处理中', 'In progress'],
+    client_review: ['待验收', 'Ready for review'],
+    completed: ['已完成', 'Completed'],
+    rejected: ['暂不处理', 'Not planned'],
+    withdrawn: ['已撤回', 'Withdrawn'],
+  };
+  const categories = {
+    layout: ['布局', 'Layout'],
+    copy: ['文案', 'Copy'],
+    feature: ['交互', 'Interaction'],
+    product: ['产品逻辑', 'Product logic'],
+  };
+  const statusText = (status) => statuses[status] ? l(...statuses[status]) : status;
+  const categoryText = (category) => categories[category] ? l(...categories[category]) : category;
+
+  function saveEditTokens() {
+    try {
+      const entries = Object.entries(state.editTokens).slice(-100);
+      state.editTokens = Object.fromEntries(entries);
+      localStorage.setItem(editStorageKey, JSON.stringify(state.editTokens));
+    } catch (_) { /* Editing remains unavailable if browser storage is disabled. */ }
+  }
+
+  function rememberEditToken(publicId, editToken) {
+    if (publicId && editToken && editToken.length >= 40) {
+      state.editTokens[publicId] = editToken;
+      saveEditTokens();
+    }
+  }
+
+  function forgetEditToken(publicId) {
+    delete state.editTokens[publicId];
+    saveEditTokens();
+  }
+
+  async function api(path, options = {}) {
+    const response = await fetch(`./api${path}`, {
+      credentials: 'same-origin',
+      ...options,
+      headers: { 'Content-Type': 'application/json', 'X-Review-Token': token, ...(options.headers || {}) },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = window.chatcommonsI18n.locale === 'en'
+        ? 'The review service could not complete this request.'
+        : (body.error || '评审服务暂时不可用');
+      throw new Error(message);
+    }
+    return body;
+  }
+
+  function currentScreen() {
+    return document.documentElement.dataset.reviewScreen || 'home';
+  }
+
+  function selectorFor(element) {
+    if (!element || element === document.body) return 'body';
+    const parts = [];
+    let node = element;
+    while (node && node.nodeType === 1 && node !== document.body && parts.length < 4) {
+      let part = node.tagName.toLowerCase();
+      if (node.id) {
+        part += `#${node.id.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+        parts.unshift(part);
+        break;
+      }
+      const classes = [...node.classList].filter((name) => !name.startsWith('review-') && name !== 'is-active').slice(0, 2);
+      if (classes.length) part += `.${classes.map((name) => name.replace(/[^a-zA-Z0-9_-]/g, '')).join('.')}`;
+      parts.unshift(part);
+      node = node.parentElement;
+    }
+    return parts.join(' > ') || 'body';
+  }
+
+  function visibleText(element) {
+    return (element.innerText || element.getAttribute('aria-label') || element.tagName || '').trim().replace(/\s+/g, ' ').slice(0, 240);
+  }
+
+  function canonicalText(value) {
+    const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+    return window.chatcommonsI18n.canonicalText?.(normalized) || normalized;
+  }
+
+  function targetFor(item) {
+    const expected = canonicalText(item.targetText);
+    const root = $('#app-shell');
+    if (!expected || !root) return null;
+    const candidates = [root, ...root.querySelectorAll('*')].filter((element) => {
+      if (element.closest('[data-review-ui]') || element.getClientRects().length === 0) return false;
+      return canonicalText(visibleText(element)) === expected;
+    });
+    if (!candidates.length) return null;
+    return candidates.reduce((best, element) => {
+      const rect = element.getBoundingClientRect();
+      const bestRect = best.getBoundingClientRect();
+      return rect.width * rect.height < bestRect.width * bestRect.height ? element : best;
+    });
+  }
+
+  function positionMarker(marker, item) {
+    const target = targetFor(item);
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      marker.style.left = `${window.scrollX + rect.left + rect.width / 2}px`;
+      marker.style.top = `${window.scrollY + rect.top + rect.height / 2}px`;
+      marker.dataset.anchor = 'element';
+      return;
+    }
+    const captureX = Number(item.scrollX || 0) + Number(item.x || 0) * Number(item.viewportWidth || innerWidth);
+    const captureY = Number(item.scrollY || 0) + Number(item.y || 0) * Number(item.viewportHeight || innerHeight);
+    marker.style.left = `${captureX}px`;
+    marker.style.top = `${captureY}px`;
+    marker.dataset.anchor = 'capture';
+  }
+
+  function refreshMarkerPositions() {
+    state.markerFrame = 0;
+    $$('[data-review-marker]').forEach((marker) => {
+      const item = state.markerItems.get(marker.dataset.reviewMarker);
+      if (item) positionMarker(marker, item);
+    });
+  }
+
+  function scheduleMarkerPositions() {
+    if (!state.markerFrame) state.markerFrame = requestAnimationFrame(refreshMarkerPositions);
+  }
+
+  function clearHighlight() {
+    if (state.highlighted) state.highlighted.classList.remove('review-highlight');
+    state.highlighted = null;
+  }
+
+  function setSelecting(value) {
+    state.selecting = value;
+    document.body.classList.toggle('review-selecting', value);
+    $('[data-review-select]').textContent = value ? l('取消标注', 'Cancel annotation') : l('标注意见', 'Annotate');
+    if (!value) clearHighlight();
+  }
+
+  function setCollapsed(value) {
+    state.collapsed = value;
+    toolbar.classList.toggle('is-collapsed', value);
+    toolbar.setAttribute('aria-expanded', String(!value));
+    const button = $('[data-review-collapse]');
+    button.textContent = value ? '＋' : '－';
+    button.title = value ? l('展开评审工具', 'Expand review tools') : l('收起评审工具', 'Collapse review tools');
+    button.setAttribute('aria-label', button.title);
+    localStorage.setItem('chatcommons-review-collapsed', String(value));
+    if (value) {
+      setSelecting(false);
+      $('#review-list').hidden = true;
+    }
+  }
+
+  function notify(message) {
+    let node = $('#review-notice');
+    if (!node) {
+      node = document.createElement('div');
+      node.id = 'review-notice';
+      node.className = 'review-notice';
+      node.dataset.reviewUi = 'true';
+      document.body.appendChild(node);
+    }
+    node.textContent = message;
+    node.classList.add('show');
+    clearTimeout(notify.timer);
+    notify.timer = setTimeout(() => node.classList.remove('show'), 2600);
+  }
+
+  function renderList() {
+    const list = $('#review-list');
+    list.replaceChildren();
+    if (!state.reviews.length) {
+      const empty = document.createElement('small');
+      empty.textContent = l('还没有提交意见。', 'No feedback yet.');
+      list.appendChild(empty);
+      return;
+    }
+    state.reviews.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'review-item';
+      const title = document.createElement('strong');
+      title.textContent = categoryText(item.category) + ' · ' + item.message;
+      const context = document.createElement('small');
+      context.textContent = (item.targetText || item.screen) + ' · ' + statusText(item.status);
+      row.append(title, context);
+      if (item.adminReply) {
+        const reply = document.createElement('small');
+        reply.textContent = l('回复：', 'Reply: ') + item.adminReply;
+        row.appendChild(reply);
+      }
+      const editToken = state.editTokens[item.publicId];
+      const canEdit = editToken && item.status === 'pending';
+      const canWithdraw = editToken && ['pending', 'in_progress', 'client_review'].includes(item.status);
+      if (canEdit || canWithdraw) {
+        const actions = document.createElement('div');
+        actions.className = 'review-item-actions';
+        if (canEdit) {
+          const edit = document.createElement('button');
+          edit.type = 'button';
+          edit.className = 'secondary';
+          edit.textContent = l('编辑', 'Edit');
+          edit.onclick = () => openEditForm(item);
+          actions.appendChild(edit);
+        }
+        if (canWithdraw) {
+          const withdraw = document.createElement('button');
+          withdraw.type = 'button';
+          withdraw.className = 'review-danger';
+          withdraw.textContent = l('撤回', 'Withdraw');
+          withdraw.onclick = () => withdrawReview(item);
+          actions.appendChild(withdraw);
+        }
+        row.appendChild(actions);
+      }
+      list.appendChild(row);
+    });
+  }
+
+  function renderMarkers() {
+    $$('[data-review-marker]').forEach((node) => node.remove());
+    state.markerItems.clear();
+    const screen = currentScreen();
+    const legacyScreen = screen === 'home' ? 'home' : 'community';
+    state.reviews.filter((item) => (
+      item.screen === screen || item.screen.startsWith(legacyScreen + ' ·')
+    )).forEach((item, index) => {
+      const marker = document.createElement('button');
+      marker.type = 'button';
+      marker.className = 'review-marker';
+      marker.dataset.reviewUi = 'true';
+      marker.dataset.reviewMarker = item.publicId;
+      marker.dataset.status = item.status;
+      marker.textContent = String(index + 1);
+      marker.title = item.message + ' · ' + statusText(item.status);
+      marker.onclick = () => {
+        $('#review-list').hidden = false;
+        renderList();
+      };
+      document.body.appendChild(marker);
+      state.markerItems.set(item.publicId, item);
+      positionMarker(marker, item);
+    });
+  }
+
+  async function loadReviews() {
+    try {
+      const result = await api('/reviews');
+      document.documentElement.dataset.reviewAuthorized = 'true';
+      state.reviews = result.reviews || [];
+      renderList();
+      renderMarkers();
+    } catch (error) {
+      notify(error.message);
+    }
+  }
+
+  async function copyReviewLink() {
+    const link = new URL(location.href);
+    link.searchParams.set('review', token);
+    try {
+      await navigator.clipboard.writeText(link.toString());
+      notify(l('审阅链接已复制，可以直接发给朋友', 'Review link copied. It is ready to share.'));
+    } catch (_) {
+      window.prompt(l('复制下面的审阅链接', 'Copy this review link'), link.toString());
+    }
+  }
+
+  function openEditForm(item) {
+    const editToken = state.editTokens[item.publicId];
+    if (!editToken) return;
+    const modal = document.createElement('div');
+    modal.className = 'review-modal';
+    modal.dataset.reviewUi = 'true';
+    modal.innerHTML = `<form class="review-form">
+      <h2>编辑意见</h2>
+      <p data-selected-context></p>
+      <div class="review-form-row">
+        <label>意见类型<select name="category"><option value="layout">布局</option><option value="copy">文案</option><option value="feature">交互</option><option value="product">产品逻辑</option></select></label>
+        <label>优先级<select name="priority"><option value="normal">一般</option><option value="high">重要</option><option value="low">不急</option></select></label>
+      </div>
+      <label>具体意见<textarea name="message" required minlength="2"></textarea></label>
+      <div class="review-form-actions"><button class="secondary" type="button" data-review-cancel>取消</button><button type="submit">保存修改</button></div>
+    </form>`;
+    window.chatcommonsI18n.translateSubtree(modal);
+    $('[data-selected-context]', modal).textContent = l('正在编辑：', 'Editing: ') + (item.targetText || item.screen);
+    const form = $('.review-form', modal);
+    form.elements.category.value = item.category;
+    form.elements.priority.value = item.priority;
+    form.elements.message.value = item.message;
+    $('[data-review-cancel]', modal).onclick = () => modal.remove();
+    modal.onclick = (event) => { if (event.target === modal) modal.remove(); };
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const submit = $('button[type="submit"]', form);
+      submit.disabled = true;
+      try {
+        await api(`/reviews/${encodeURIComponent(item.publicId)}`, {
+          method: 'PATCH',
+          headers: { 'X-Edit-Token': editToken },
+          body: JSON.stringify({
+            category: form.elements.category.value,
+            priority: form.elements.priority.value,
+            message: form.elements.message.value.trim(),
+          }),
+        });
+        modal.remove();
+        await loadReviews();
+        notify(l('意见已更新', 'Feedback updated'));
+      } catch (error) {
+        notify(error.message);
+        submit.disabled = false;
+      }
+    };
+    document.body.appendChild(modal);
+    form.elements.message.focus();
+  }
+
+  async function withdrawReview(item) {
+    const editToken = state.editTokens[item.publicId];
+    if (!editToken || !window.confirm(l('确定撤回这条意见吗？', 'Withdraw this feedback?'))) return;
+    try {
+      await api(`/reviews/${encodeURIComponent(item.publicId)}`, {
+        method: 'DELETE', headers: { 'X-Edit-Token': editToken },
+      });
+      forgetEditToken(item.publicId);
+      await loadReviews();
+      notify(l('意见已撤回', 'Feedback withdrawn'));
+    } catch (error) { notify(error.message); }
+  }
+
+  function openContributorForm() {
+    const appreciation = $('.review-appreciation');
+    const rect = appreciation.getBoundingClientRect();
+    const modal = document.createElement('div');
+    modal.className = 'review-modal';
+    modal.dataset.reviewUi = 'true';
+    modal.innerHTML = `<form class="review-form contributor-form">
+      <h2>贡献者署名</h2>
+      <p>谢谢你帮助改进 ChatCommons。提交后会进入管理员收件箱，确认后再加入公开贡献者名单。</p>
+      <label class="review-check"><input type="checkbox" name="anonymous"> 我希望保持匿名</label>
+      <label data-credit-public>公开名称或账号<input name="creditName" required maxlength="80" autocomplete="nickname" placeholder="例如：Pinksie 或 @pinksie"></label>
+      <label data-credit-public>个人主页（可选）<input name="creditLink" type="url" maxlength="240" inputmode="url" placeholder="https://"></label>
+      <div class="review-form-actions"><button class="secondary" type="button" data-review-cancel>取消</button><button type="submit">提交署名信息</button></div>
+    </form>`;
+    window.chatcommonsI18n.translateSubtree(modal);
+    document.body.appendChild(modal);
+    const form = $('.review-form', modal);
+    const anonymous = form.elements.anonymous;
+    const name = form.elements.creditName;
+    const link = form.elements.creditLink;
+    const updateMode = () => {
+      $$('[data-credit-public]', form).forEach((label) => { label.hidden = anonymous.checked; });
+      name.required = !anonymous.checked;
+      if (anonymous.checked) {
+        name.value = '';
+        link.value = '';
+      }
+    };
+    anonymous.onchange = updateMode;
+    $('[data-review-cancel]', modal).onclick = () => modal.remove();
+    modal.onclick = (event) => { if (event.target === modal) modal.remove(); };
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const submit = $('button[type="submit"]', form);
+      submit.disabled = true;
+      const preference = anonymous.checked
+        ? l('贡献者署名选择：保持匿名，不公开姓名或账号。', 'Contributor credit preference: remain anonymous; do not publish a name or handle.')
+        : l(
+          `贡献者署名申请：公开名称或账号为“${name.value.trim()}”${link.value.trim() ? `；个人主页：${link.value.trim()}` : ''}。`,
+          `Contributor credit request: publish as “${name.value.trim()}”${link.value.trim() ? `; profile: ${link.value.trim()}` : ''}.`,
+        );
+      try {
+        const created = await api('/reviews', {
+          method: 'POST',
+          body: JSON.stringify({
+            surface: 'prototype',
+            screen: 'contributor-credit',
+            targetId: '.review-appreciation',
+            targetText: l('早期贡献者署名', 'Early contributor credit'),
+            x: Math.min(1, Math.max(0, (rect.left + rect.width / 2) / innerWidth)),
+            y: Math.min(1, Math.max(0, (rect.top + rect.height / 2) / innerHeight)),
+            scrollX: Math.max(0, window.scrollX),
+            scrollY: Math.max(0, window.scrollY),
+            viewportWidth: innerWidth,
+            viewportHeight: innerHeight,
+            category: 'product',
+            priority: 'normal',
+            message: preference,
+            screenshot: '',
+          }),
+        });
+        rememberEditToken(created.publicId, created.editToken);
+        modal.remove();
+        await loadReviews();
+        $('#review-list').hidden = false;
+        notify(l('署名信息已提交，感谢你的贡献', 'Credit preference submitted. Thank you for contributing.'));
+      } catch (error) {
+        notify(error.message);
+        submit.disabled = false;
+      }
+    };
+    name.focus();
+  }
+
+  function openForm(element) {
+    const rect = element.getBoundingClientRect();
+    const selectedScreen = currentScreen();
+    const modal = document.createElement('div');
+    modal.className = 'review-modal';
+    modal.dataset.reviewUi = 'true';
+    modal.innerHTML = `<form class="review-form">
+      <h2>这里需要怎么改？</h2>
+      <p data-selected-context></p>
+      <div class="review-form-row">
+        <label>意见类型<select name="category"><option value="layout">布局</option><option value="copy">文案</option><option value="feature">交互</option><option value="product">产品逻辑</option></select></label>
+        <label>优先级<select name="priority"><option value="normal">一般</option><option value="high">重要</option><option value="low">不急</option></select></label>
+      </div>
+      <label>具体意见<textarea name="message" required minlength="2" placeholder="直接说你的感觉，例如：我不知道这里点了会发生什么"></textarea></label>
+      <div class="review-form-actions"><button class="secondary" type="button" data-review-cancel>取消</button><button type="submit">提交</button></div>
+    </form>`;
+    window.chatcommonsI18n.translateSubtree(modal);
+    $('[data-selected-context]', modal).textContent = l('你选择了：', 'You selected: ') + (visibleText(element) || l('页面上的这个位置', 'this part of the page'));
+    document.body.appendChild(modal);
+    const form = $('.review-form', modal);
+    $('[data-review-cancel]', modal).onclick = () => modal.remove();
+    modal.onclick = (event) => { if (event.target === modal) modal.remove(); };
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const submit = $('button[type="submit"]', form);
+      submit.disabled = true;
+      try {
+        let screenshot = '';
+        try {
+          const html2canvas = await loadScreenshotLibrary();
+          const canvas = await html2canvas(document.documentElement, {
+            x: scrollX, y: scrollY, width: innerWidth, height: innerHeight,
+            windowWidth: innerWidth, windowHeight: innerHeight,
+            scale: 0.65, useCORS: true, logging: false,
+            ignoreElements: (node) => node.hasAttribute?.('data-review-ui'),
+          });
+          screenshot = canvas.toDataURL('image/jpeg', 0.68);
+          if (screenshot.length > 1450000) screenshot = canvas.toDataURL('image/jpeg', 0.45);
+        } catch (_) { screenshot = ''; }
+        const payload = {
+          surface: 'prototype', screen: selectedScreen,
+          targetId: selectorFor(element), targetText: visibleText(element),
+          x: Math.min(1, Math.max(0, (rect.left + rect.width / 2) / innerWidth)),
+          y: Math.min(1, Math.max(0, (rect.top + rect.height / 2) / innerHeight)),
+          scrollX: Math.max(0, window.scrollX), scrollY: Math.max(0, window.scrollY),
+          viewportWidth: innerWidth, viewportHeight: innerHeight,
+          category: form.elements.category.value, priority: form.elements.priority.value,
+          message: form.elements.message.value.trim(), screenshot,
+        };
+        const created = await api('/reviews', { method: 'POST', body: JSON.stringify(payload) });
+        rememberEditToken(created.publicId, created.editToken);
+        modal.remove();
+        await loadReviews();
+        notify(l('意见已提交', 'Feedback submitted'));
+      } catch (error) {
+        notify(error.message);
+        submit.disabled = false;
+      }
+    };
+    form.elements.message.focus();
+  }
+
+  const toolbar = document.createElement('aside');
+  toolbar.className = 'review-toolbar';
+  toolbar.dataset.reviewUi = 'true';
+  toolbar.innerHTML = `<div class="review-toolbar-heading"><div><strong>原型评审</strong><small>正常操作页面；需要评论时再点“标注意见”。</small></div><button type="button" class="review-collapse" data-review-collapse aria-label="收起评审工具">－</button></div>
+    <div class="review-toolbar-body"><details class="review-appreciation" open>
+      <summary>Thank you, early reviewers</summary>
+      <p>Thank you all for taking the time to review ChatCommons. Your comments about the project explanation, visual hierarchy, invitations, mentions, navigation, and empty space were genuinely useful. We have updated the prototype and added a clearer product brief based on your feedback.</p>
+      <small>We would also like to credit you as early product and design contributors. Please tell us which public name or handle you would like us to use—or if you would prefer to stay anonymous.</small>
+      <button type="button" class="credit-button" data-review-credit>提交署名信息</button>
+    </details>
+    <div class="review-toolbar-actions"><button type="button" data-review-select>标注意见</button><button type="button" class="secondary" data-review-list>已有意见</button><button type="button" class="secondary" data-review-share>复制审阅链接</button></div><div class="review-list" id="review-list" hidden></div></div>`;
+  window.chatcommonsI18n.translateSubtree(toolbar);
+  document.body.appendChild(toolbar);
+  $('[data-review-collapse]').onclick = () => setCollapsed(!state.collapsed);
+  $('[data-review-select]').onclick = () => setSelecting(!state.selecting);
+  $('[data-review-list]').onclick = () => { const list = $('#review-list'); list.hidden = !list.hidden; if (!list.hidden) renderList(); };
+  $('[data-review-share]').onclick = copyReviewLink;
+  $('[data-review-credit]').onclick = openContributorForm;
+  setCollapsed(state.collapsed);
+  document.addEventListener('mouseover', (event) => {
+    if (!state.selecting || event.target.closest('[data-review-ui]')) return;
+    clearHighlight();
+    state.highlighted = event.target;
+    event.target.classList.add('review-highlight');
+  }, true);
+  document.addEventListener('click', (event) => {
+    if (!state.selecting || event.target.closest('[data-review-ui]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const element = event.target;
+    setSelecting(false);
+    openForm(element);
+  }, true);
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && state.selecting) setSelecting(false); });
+  window.addEventListener('resize', renderMarkers);
+  document.addEventListener('scroll', scheduleMarkerPositions, true);
+  window.addEventListener('chatcommons:screen-change', renderMarkers);
+  window.addEventListener('chatcommons:locale-change', () => {
+    setSelecting(state.selecting);
+    setCollapsed(state.collapsed);
+    renderList();
+    renderMarkers();
+  });
+  new MutationObserver(renderMarkers).observe($('#app-shell'), { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+  if (window.ResizeObserver) new ResizeObserver(scheduleMarkerPositions).observe($('#app-shell'));
+  loadReviews();
+}());

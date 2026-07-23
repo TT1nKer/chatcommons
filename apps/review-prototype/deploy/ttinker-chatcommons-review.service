@@ -1,0 +1,31 @@
+[Unit]
+Description=ttinker / ChatCommons isolated UI review API
+After=network.target
+
+[Service]
+Type=simple
+User=ttinker-review
+Group=ttinker-review
+UMask=0027
+WorkingDirectory=/var/www/ttinker/chatcommons/current
+EnvironmentFile=/etc/ttinker-chatcommons-review.env
+ExecStart=/usr/bin/python3 /var/www/ttinker/chatcommons/current/server.py
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/ttinker/chatcommons-review
+
+[Install]
+WantedBy=multi-user.target

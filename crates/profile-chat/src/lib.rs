@@ -8,10 +8,37 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-pub const PROFILE_ID: &str = "chatcommons.chat.v1";
+pub const PROFILE_ID: &str = "chatcommons.chat.v2";
 pub const GENESIS_TYPE: &str = "chat.community.create";
 pub const INVITE_PACKAGE_VERSION: u16 = 1;
 pub const MAX_INVITE_PACKAGE_BYTES: usize = 4 * 1024;
+pub const MAX_HOME_SERVER_ENDPOINTS: usize = 8;
+pub const MAX_HOME_SERVER_ENDPOINT_BYTES: usize = 512;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct HomeServerId([u8; 32]);
+
+impl HomeServerId {
+    pub fn from_public_key(public_key: &[u8; 32]) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"chatcommons:home-server-id:v1\0");
+        hasher.update(public_key);
+        Self(*hasher.finalize().as_bytes())
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeServerBinding {
+    pub declaration: EventId,
+    pub server_id: HomeServerId,
+    pub server_public_key: [u8; PUBLIC_KEY_LEN],
+    pub endpoints: Vec<String>,
+    pub history_heads: Vec<EventId>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChatPayload {
@@ -46,6 +73,10 @@ pub enum ChatPayload {
     OwnershipTransfer {
         new_owner: UserId,
     },
+    HomeServerSet {
+        server_public_key: Vec<u8>,
+        endpoints: Vec<String>,
+    },
 }
 
 impl ChatPayload {
@@ -60,6 +91,7 @@ impl ChatPayload {
             Self::AdministratorGrant { .. } => "chat.admin.grant",
             Self::AdministratorRevoke { .. } => "chat.admin.revoke",
             Self::OwnershipTransfer { .. } => "chat.ownership.transfer",
+            Self::HomeServerSet { .. } => "chat.home-server.set",
         }
     }
 }
@@ -269,6 +301,7 @@ impl ValidatedInvite {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectionReason {
+    InvalidPayload,
     MissingParent,
     ParentRejected,
     WrongCommunity,
@@ -280,6 +313,7 @@ pub enum RejectionReason {
     AlreadyAdministrator,
     CannotRemoveOwner,
     UnknownChannel,
+    InvalidHomeServer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,6 +324,7 @@ pub struct ChatSnapshot {
     pub administrators: BTreeSet<UserId>,
     pub channels: BTreeSet<[u8; 32]>,
     pub active_invitations: BTreeMap<EventId, [u8; PUBLIC_KEY_LEN]>,
+    pub home_server: Option<HomeServerBinding>,
     pub event_ids: BTreeSet<EventId>,
 }
 
@@ -309,6 +344,7 @@ struct State {
     channels: BTreeSet<[u8; 32]>,
     invitations: BTreeMap<EventId, Vec<u8>>,
     accepted_invitations: BTreeSet<EventId>,
+    home_server: Option<HomeServerBinding>,
 }
 
 pub fn create_chat_genesis(
@@ -367,17 +403,24 @@ pub fn resolve(events: &[SignedEvent]) -> Result<ChatResolution, ChatError> {
     let mut by_id = BTreeMap::new();
     let mut payloads = BTreeMap::new();
     let mut authors = BTreeMap::new();
+    let mut rejected = BTreeMap::new();
     for event in events {
         validate_event(event)?;
-        payloads.insert(event.event_id, decode(event)?);
         authors.insert(event.event_id, author_id(event)?);
         by_id.entry(event.event_id).or_insert_with(|| event.clone());
+        match decode(event) {
+            Ok(payload) => {
+                payloads.insert(event.event_id, payload);
+            }
+            Err(_) => {
+                rejected.insert(event.event_id, RejectionReason::InvalidPayload);
+            }
+        }
     }
     let mut state = State::default();
     let mut accepted = BTreeSet::new();
     let mut accepted_in_order = Vec::new();
-    let mut rejected = BTreeMap::new();
-    let mut pending: BTreeSet<EventId> = by_id.keys().copied().collect();
+    let mut pending: BTreeSet<EventId> = payloads.keys().copied().collect();
     loop {
         let mut ready: Vec<EventId> = pending
             .iter()
@@ -444,6 +487,7 @@ pub fn resolve(events: &[SignedEvent]) -> Result<ChatResolution, ChatError> {
             .filter(|(id, _)| !state.accepted_invitations.contains(id))
             .filter_map(|(id, key)| key.try_into().ok().map(|key| (id, key)))
             .collect(),
+        home_server: state.home_server,
         event_ids: accepted,
     };
     Ok(ChatResolution {
@@ -573,6 +617,13 @@ fn validate_context(
                 Err(RejectionReason::MemberNotActive)
             }
         }
+        ChatPayload::HomeServerSet {
+            server_public_key,
+            endpoints,
+        } => {
+            require_owner(state, author)?;
+            validate_home_server(server_public_key, endpoints)
+        }
     }
 }
 
@@ -589,6 +640,32 @@ fn require_owner(state: &State, author: UserId) -> Result<(), RejectionReason> {
     } else {
         Err(RejectionReason::NotOwner)
     }
+}
+
+fn validate_home_server(
+    server_public_key: &[u8],
+    endpoints: &[String],
+) -> Result<(), RejectionReason> {
+    if server_public_key.len() != PUBLIC_KEY_LEN
+        || endpoints.is_empty()
+        || endpoints.len() > MAX_HOME_SERVER_ENDPOINTS
+    {
+        return Err(RejectionReason::InvalidHomeServer);
+    }
+    let mut unique = BTreeSet::new();
+    for endpoint in endpoints {
+        if endpoint.is_empty()
+            || endpoint.len() > MAX_HOME_SERVER_ENDPOINT_BYTES
+            || !endpoint.is_ascii()
+            || endpoint
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+            || !unique.insert(endpoint)
+        {
+            return Err(RejectionReason::InvalidHomeServer);
+        }
+    }
+    Ok(())
 }
 
 fn apply(state: &mut State, event: &SignedEvent, payload: &ChatPayload, author: UserId) {
@@ -627,6 +704,20 @@ fn apply(state: &mut State, event: &SignedEvent, payload: &ChatPayload, author: 
         ChatPayload::OwnershipTransfer { new_owner } => {
             state.owner = Some(*new_owner);
             state.administrators.insert(*new_owner);
+        }
+        ChatPayload::HomeServerSet {
+            server_public_key,
+            endpoints,
+        } => {
+            if let Ok(public_key) = <[u8; PUBLIC_KEY_LEN]>::try_from(server_public_key.as_slice()) {
+                state.home_server = Some(HomeServerBinding {
+                    declaration: event.event_id,
+                    server_id: HomeServerId::from_public_key(&public_key),
+                    server_public_key: public_key,
+                    endpoints: endpoints.clone(),
+                    history_heads: event.content.parents.clone(),
+                });
+            }
         }
     }
 }
