@@ -42,7 +42,7 @@
   }
   const state = {
     selecting: false,
-    collapsed: localStorage.getItem('chatcommons-review-collapsed') === 'true',
+    collapsed: false,
     highlighted: null,
     reviews: [],
     markerItems: new Map(),
@@ -198,7 +198,6 @@
     button.textContent = value ? '＋' : '－';
     button.title = value ? l('展开评审工具', 'Expand review tools') : l('收起评审工具', 'Collapse review tools');
     button.setAttribute('aria-label', button.title);
-    localStorage.setItem('chatcommons-review-collapsed', String(value));
     if (value) {
       setSelecting(false);
       $('#review-list').hidden = true;
