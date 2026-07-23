@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod bootstrap;
 pub mod network;
 
 use chatcommons_node_core::{CoreNode, NodeError};
@@ -173,8 +174,16 @@ impl SyncPeer {
         &self.node
     }
 
+    pub fn node_mut(&mut self) -> &mut CoreNode {
+        &mut self.node
+    }
+
     pub fn pending_len(&self) -> usize {
         self.pending.len()
+    }
+
+    pub fn community(&self) -> CommunityId {
+        self.community
     }
 
     fn head_messages(&self) -> Result<Vec<SyncMessage>, SyncError> {

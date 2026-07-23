@@ -115,6 +115,10 @@ impl InviteCapability {
         }
     }
 
+    fn sign(&self, message: &[u8]) -> [u8; SIGNATURE_LEN] {
+        Identity::from_seed(self.seed).sign(message)
+    }
+
     pub fn encode_package(
         &self,
         community: CommunityId,
@@ -155,7 +159,19 @@ struct InvitePackage {
     capability_secret: Vec<u8>,
 }
 
+impl Drop for InvitePackage {
+    fn drop(&mut self) {
+        self.capability_secret.fill(0);
+    }
+}
+
 pub struct ParsedInvitePackage(InvitePackage);
+
+pub struct PreparedInvite {
+    community: CommunityId,
+    invitation: EventId,
+    capability: InviteCapability,
+}
 
 pub struct ValidatedInvite {
     community: CommunityId,
@@ -172,6 +188,10 @@ pub fn parse_invite_package(bytes: &[u8]) -> Result<ParsedInvitePackage, InviteE
 
 impl ParsedInvitePackage {
     pub fn validate(self, invitation_event: &SignedEvent) -> Result<ValidatedInvite, InviteError> {
+        self.prepare()?.validate(invitation_event)
+    }
+
+    pub fn prepare(self) -> Result<PreparedInvite, InviteError> {
         if self.0.version != INVITE_PACKAGE_VERSION {
             return Err(InviteError::UnsupportedVersion);
         }
@@ -181,23 +201,44 @@ impl ParsedInvitePackage {
             .as_slice()
             .try_into()
             .map_err(|_| InviteError::InvalidSecret)?;
-        let capability = InviteCapability::from_seed(seed);
+        Ok(PreparedInvite {
+            community: self.0.community,
+            invitation: self.0.invitation,
+            capability: InviteCapability::from_seed(seed),
+        })
+    }
+}
+
+impl PreparedInvite {
+    pub fn community(&self) -> CommunityId {
+        self.community
+    }
+
+    pub fn invitation(&self) -> EventId {
+        self.invitation
+    }
+
+    pub fn sign_possession_proof(&self, proof_bytes: &[u8]) -> [u8; SIGNATURE_LEN] {
+        self.capability.sign(proof_bytes)
+    }
+
+    pub fn validate(self, invitation_event: &SignedEvent) -> Result<ValidatedInvite, InviteError> {
         validate_event(invitation_event).map_err(ChatError::from)?;
         let payload = decode(invitation_event)?;
-        let matches = invitation_event.event_id == self.0.invitation
-            && invitation_event.content.community_id == Some(self.0.community)
+        let matches = invitation_event.event_id == self.invitation
+            && invitation_event.content.community_id == Some(self.community)
             && matches!(
                 payload,
                 ChatPayload::MemberInvite { capability_public_key }
-                    if capability_public_key == capability.public_key()
+                    if capability_public_key == self.capability.public_key()
             );
         if !matches {
             return Err(InviteError::InvitationMismatch);
         }
         Ok(ValidatedInvite {
-            community: self.0.community,
-            invitation: self.0.invitation,
-            capability,
+            community: self.community,
+            invitation: self.invitation,
+            capability: self.capability,
         })
     }
 }
@@ -248,6 +289,7 @@ pub struct ChatSnapshot {
     pub members: BTreeSet<UserId>,
     pub administrators: BTreeSet<UserId>,
     pub channels: BTreeSet<[u8; 32]>,
+    pub active_invitations: BTreeMap<EventId, [u8; PUBLIC_KEY_LEN]>,
     pub event_ids: BTreeSet<EventId>,
 }
 
@@ -396,6 +438,12 @@ pub fn resolve(events: &[SignedEvent]) -> Result<ChatResolution, ChatError> {
         members: state.members,
         administrators: state.administrators,
         channels: state.channels,
+        active_invitations: state
+            .invitations
+            .into_iter()
+            .filter(|(id, _)| !state.accepted_invitations.contains(id))
+            .filter_map(|(id, key)| key.try_into().ok().map(|key| (id, key)))
+            .collect(),
         event_ids: accepted,
     };
     Ok(ChatResolution {

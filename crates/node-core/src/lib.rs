@@ -19,6 +19,10 @@ pub enum NodeError {
     MissingParent,
     #[error("batch exceeds the pending event limit")]
     PendingLimitExceeded,
+    #[error("requested event is unknown")]
+    UnknownEvent,
+    #[error("event ancestry exceeds its limit")]
+    AncestryLimitExceeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +132,32 @@ impl CoreNode {
             }
         }
         Ok(events)
+    }
+
+    pub fn all_events(&self) -> Result<Vec<SignedEvent>, NodeError> {
+        let ids: Vec<EventId> = self.known.iter().copied().collect();
+        self.events(&ids)
+    }
+
+    pub fn ancestry(&self, event_id: EventId, limit: usize) -> Result<Vec<SignedEvent>, NodeError> {
+        if limit == 0 {
+            return Err(NodeError::AncestryLimitExceeded);
+        }
+        let mut pending = vec![event_id];
+        let mut discovered = BTreeSet::new();
+        let mut events = BTreeMap::new();
+        while let Some(id) = pending.pop() {
+            if !discovered.insert(id) {
+                continue;
+            }
+            if discovered.len() > limit {
+                return Err(NodeError::AncestryLimitExceeded);
+            }
+            let event = self.event(id)?.ok_or(NodeError::UnknownEvent)?;
+            pending.extend(event.content.parents.iter().copied());
+            events.insert(id, event);
+        }
+        Ok(events.into_values().collect())
     }
 
     pub fn heads(&self) -> Result<Vec<EventId>, NodeError> {

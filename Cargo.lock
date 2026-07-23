@@ -332,6 +332,7 @@ dependencies = [
 name = "chatcommons-sync"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "blake3",
  "chatcommons-crypto",
  "chatcommons-node-core",
@@ -341,6 +342,7 @@ dependencies = [
  "futures",
  "hex",
  "libp2p",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "tempfile",
