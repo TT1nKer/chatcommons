@@ -1,6 +1,11 @@
-# ChatCommons desktop friends alpha
+# ChatCommons eframe protocol test shell
 
-This is the first real desktop test client. It intentionally exposes only the
+> This application is temporarily retained for protocol diagnostics. It is not
+> the product UI source and must not be used as the visual reference for future
+> friend-facing releases. The shared client UI lives in `apps/client-ui`; see
+> ADR 0024.
+
+This was the first real desktop test client. It intentionally exposes only the
 smallest complete workflow: create one local identity, join one community from
 a single-use invitation, list signed channels and messages, send a signed text
 message, and synchronize with the community's declared Home Server.

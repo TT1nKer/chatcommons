@@ -11,16 +11,19 @@ contains protocol v2, one deliberately small reference chat profile, single-use
 bearer invitations, secure invitation bootstrap, direct QUIC synchronization,
 relay-assisted hole punching, and an owner-signed replaceable home-server
 declaration with a bounded diagnostic authenticated Home Server process. The
-workspace now also contains a minimal native friends-alpha text client. It
-contains no production hosted service, trusted release binary, voice
-implementation, account recovery or multi-device identity.
+workspace now also contains a minimal native protocol test shell and the start
+of a shared browser/Tauri client UI. It contains no production hosted service,
+trusted release binary, voice implementation, account recovery or multi-device
+identity.
 
 ## Friends-alpha preview
 
-The current native client is an intentionally small friends alpha: it creates a
+The current native eframe shell is an intentionally small protocol alpha: it creates a
 local test identity, joins a community with a one-person invitation, shows
 validated signed messages, and sends text through the replaceable Community
-Home Server. These screenshots are development captures and will change.
+Home Server. It is being replaced as the friend-facing surface by the shared
+client UI defined in [ADR 0024](docs/adr/0024-single-client-ui-source.md). These
+screenshots are development captures and will change.
 
 | Join from an invitation | Signed community chat |
 | --- | --- |
@@ -42,7 +45,8 @@ inbox. It does not require or create a public GitHub issue.
 - `chatcommons-profile-chat`: the optional `chatcommons.chat.v2` reference semantics
 - `chatcommons-sync`: bounded DAG synchronization over direct or relayed connections
 - `chatcommons-relay`: bounded, ephemeral development Circuit Relay v2 node
-- `apps/desktop`: minimal Chinese/English friends-alpha desktop client
+- `apps/client-ui`: single React/TypeScript UI for browser review and Tauri
+- `apps/desktop`: temporary eframe protocol diagnostic shell
 
 ## M2c-M3d diagnostic node
 
