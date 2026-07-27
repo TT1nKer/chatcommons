@@ -1,14 +1,15 @@
-# ChatCommons eframe protocol test shell
+# ChatCommons friends-alpha desktop client
 
-> This application is temporarily retained for protocol diagnostics. It is not
-> the product UI source and must not be used as the visual reference for future
-> friend-facing releases. The shared client UI lives in `apps/client-ui`; see
-> ADR 0024.
+The friend-facing desktop application is a Tauri host for the shared React
+client in `apps/client-ui`. Browser review and packaged desktop builds therefore
+render the same product components. The former eframe shell is retained as the
+separate `chatcommons-diagnostic` binary for internal protocol checks only; see
+ADR 0024.
 
-This was the first real desktop test client. It intentionally exposes only the
-smallest complete workflow: create one local identity, join one community from
-a single-use invitation, list signed channels and messages, send a signed text
-message, and synchronize with the community's declared Home Server.
+The current alpha intentionally exposes only the smallest complete workflow:
+create one local test identity, join one community from a single-use invitation,
+list validated signed channels and messages, send signed text messages, and
+synchronize with each community's declared Home Server.
 
 Message sending is local-first: a signed message is persisted and displayed
 before the client attempts its bounded Home Server synchronization. A temporarily
@@ -17,8 +18,9 @@ the local conversation.
 
 The desktop executable and `chatcommons-node` must be installed beside each
 other. `CHATCOMMONS_NODE_PATH` may override the sidecar location for local
-development. The UI never parses or trusts remote messages itself; the sidecar
-persists and validates the protocol DAG before returning accepted profile data.
+development. The webview does not parse or trust remote messages itself. Tauri
+commands serialize operations, call the sidecar, and return only the accepted
+projected state after the sidecar has persisted and validated the protocol DAG.
 
 This alpha has no account recovery, multi-device identity, automatic updates,
 attachments, voice, notifications, or production key-management guarantee.
@@ -49,11 +51,20 @@ Build both executables into the same target directory, then launch the desktop
 binary:
 
 ```sh
+npm ci --prefix apps/client-ui
+npm run build --prefix apps/client-ui
 cargo build -p chatcommons-cli --bin chatcommons-node -p chatcommons-desktop
 CHATCOMMONS_NODE_PATH="$PWD/target/debug/chatcommons-node" \
-  cargo run -p chatcommons-desktop
+  cargo run -p chatcommons-desktop --bin chatcommons-desktop
 ```
 
 Tagged builds are packaged by `.github/workflows/friends-alpha.yml` as a macOS
 arm64 application zip and a Windows x64 zip. They are intentionally unsigned
 friends-alpha artifacts, so operating-system trust warnings are expected.
+
+Run the retained protocol diagnostic shell only when investigating the Rust
+workflow directly:
+
+```sh
+cargo run -p chatcommons-desktop --bin chatcommons-diagnostic
+```

@@ -195,14 +195,16 @@ until their respective engineering gates are met.
 
 See [`ADR 0022`](adr/0022-friends-alpha-desktop-and-server-bootstrap.md).
 
-## M4b — one reviewed client UI (in progress)
+## M4b — one reviewed client UI (first desktop slice implemented)
 
 - one React/TypeScript product interface under `apps/client-ui`
 - review adapter with demo data and authorized Annotate integration
 - Tauri adapter boundary for validated Rust snapshots and commands
 - website-only product explanation and download wrapper
-- current eframe client retained only as a protocol diagnostic harness
-- macOS-first Tauri integration before the next friend-facing desktop release
+- current eframe client retained only as the separate protocol diagnostic binary
+- Tauri host exposes identity, invitation, signed text, synchronization and
+  private feedback through a serialized Rust boundary
+- macOS and Windows friends-alpha artifacts are built from the shared UI
 
 Browser review and desktop packaging must render the same client component
 source. See [`ADR 0024`](adr/0024-single-client-ui-source.md).

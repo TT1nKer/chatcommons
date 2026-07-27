@@ -14,4 +14,15 @@ describe('client localization', () => {
     expect(copyFor('zh-CN').now).toBe('现在');
     expect(copyFor('en').now).toBe('Now');
   });
+
+  it('localizes first-use, runtime, feedback, and error paths', () => {
+    expect(copyFor('zh-CN').joinCommunity).toBe('加入朋友的社区');
+    expect(copyFor('en').joinCommunity).toBe('Join a friend’s community');
+    expect(copyFor('zh-CN').connection('degraded')).toBe('本地模式');
+    expect(copyFor('en').connection('degraded')).toBe('Local mode');
+    expect(copyFor('zh-CN').errorMessage('nodeUnavailable')).toContain('协议组件');
+    expect(copyFor('en').errorMessage('nodeUnavailable')).toContain('protocol component');
+    expect(copyFor('zh-CN').feedbackTitle).toBe('反馈与问题');
+    expect(copyFor('en').feedbackTitle).toBe('Feedback & issues');
+  });
 });

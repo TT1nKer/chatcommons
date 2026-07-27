@@ -1,5 +1,6 @@
 export type Locale = 'zh-CN' | 'en';
 export type Screen = 'home' | 'community';
+export type ConnectionStatus = 'local' | 'connected' | 'degraded';
 
 export interface Room {
   id: string;
@@ -30,8 +31,14 @@ export interface Message {
 }
 
 export interface ClientSnapshot {
+  mode: 'demo' | 'local';
   profileName: string;
   profileSymbol: string;
+  profileId: string;
+  connection: {
+    status: ConnectionStatus;
+    warningCode: string | null;
+  };
   communities: Community[];
   messagesByRoom: Record<string, Message[]>;
 }
@@ -42,8 +49,40 @@ export interface SendMessageInput {
   body: string;
 }
 
+export interface FeedbackInput {
+  whatHappened: string;
+  expected: string;
+  screen: string;
+  screenshot: string;
+  viewportWidth: number;
+  viewportHeight: number;
+  confirmed: boolean;
+}
+
+export interface FeedbackStatus {
+  publicId: string;
+  status: string;
+  adminReply: string;
+}
+
+export class ClientBridgeError extends Error {
+  readonly code: string;
+  readonly detail: string;
+
+  constructor(code: string, detail: string) {
+    super(code);
+    this.name = 'ClientBridgeError';
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
 export interface ClientAdapter {
   readonly kind: 'review' | 'tauri';
   load(): Promise<ClientSnapshot>;
+  sync(): Promise<ClientSnapshot>;
+  joinCommunity(inviteCode: string): Promise<ClientSnapshot>;
   sendMessage(input: SendMessageInput): Promise<Message>;
+  submitFeedback(input: FeedbackInput): Promise<FeedbackStatus>;
+  feedbackStatus(): Promise<FeedbackStatus | null>;
 }

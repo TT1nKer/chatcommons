@@ -43,6 +43,7 @@ Usage:
   chatcommons-node info --state <directory>
   chatcommons-node create-community --state <directory> --name <name>
   chatcommons-node create-channel --state <directory> --community <hex> --name <name>
+  chatcommons-node community-info --state <directory> --community <hex>
   chatcommons-node list-channels --state <directory> --community <hex>
   chatcommons-node send-message --state <directory> --community <hex>
     --channel <hex> --text <message>
@@ -213,6 +214,7 @@ async fn run() -> Result<(), CliError> {
         "info" => command_info(&options),
         "create-community" => command_create_community(&options),
         "create-channel" => command_create_channel(&options),
+        "community-info" => command_community_info(&options),
         "list-channels" => command_list_channels(&options),
         "send-message" => command_send_message(&options),
         "list-messages" => command_list_messages(&options),
@@ -343,6 +345,40 @@ struct MessageView {
     author_id: String,
     timestamp_ms: i64,
     text: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommunityInfoView {
+    community_id: String,
+    name: String,
+}
+
+fn command_community_info(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--community"])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let core = open_community(&state, community)?;
+    let events = core.all_events()?;
+    let resolution = resolve(&events)?;
+    let accepted = resolution.snapshot.event_ids;
+    let name = events
+        .iter()
+        .filter(|event| accepted.contains(&event.event_id))
+        .find_map(|event| match decode(event) {
+            Ok(ChatPayload::CommunityCreate { name, .. }) => Some(name),
+            _ => None,
+        })
+        .ok_or(CliError::ProfileRejected)?;
+    println!(
+        "{}",
+        serde_json::to_string(&CommunityInfoView {
+            community_id: hex::encode(community.as_bytes()),
+            name,
+        })?
+    );
+    io::stdout().flush()?;
+    Ok(())
 }
 
 fn command_list_channels(options: &Options) -> Result<(), CliError> {

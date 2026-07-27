@@ -11,19 +11,23 @@ contains protocol v2, one deliberately small reference chat profile, single-use
 bearer invitations, secure invitation bootstrap, direct QUIC synchronization,
 relay-assisted hole punching, and an owner-signed replaceable home-server
 declaration with a bounded diagnostic authenticated Home Server process. The
-workspace now also contains a minimal native protocol test shell and the start
-of a shared browser/Tauri client UI. It contains no production hosted service,
+workspace now also contains a Tauri friends-alpha client backed by the shared
+browser/desktop UI source and a separate native protocol diagnostic shell. It
+contains no production hosted service,
 trusted release binary, voice implementation, account recovery or multi-device
 identity.
 
 ## Friends-alpha preview
 
-The current native eframe shell is an intentionally small protocol alpha: it creates a
+The current Tauri client is an intentionally small protocol alpha: it creates a
 local test identity, joins a community with a one-person invitation, shows
 validated signed messages, and sends text through the replaceable Community
-Home Server. It is being replaced as the friend-facing surface by the shared
-client UI defined in [ADR 0024](docs/adr/0024-single-client-ui-source.md). These
-screenshots are development captures and will change.
+Home Server. Browser review and desktop packaging use the same client
+components as required by
+[ADR 0024](docs/adr/0024-single-client-ui-source.md). These screenshots are
+development captures and will change.
+
+![ChatCommons friends-alpha home](docs/assets/screenshots/desktop-home-alpha.png)
 
 | Join from an invitation | Signed community chat |
 | --- | --- |
@@ -46,7 +50,7 @@ inbox. It does not require or create a public GitHub issue.
 - `chatcommons-sync`: bounded DAG synchronization over direct or relayed connections
 - `chatcommons-relay`: bounded, ephemeral development Circuit Relay v2 node
 - `apps/client-ui`: single React/TypeScript UI for browser review and Tauri
-- `apps/desktop`: temporary eframe protocol diagnostic shell
+- `apps/desktop`: Tauri desktop host plus a separate eframe diagnostic binary
 
 ## M2c-M3d diagnostic node
 

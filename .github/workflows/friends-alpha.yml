@@ -23,7 +23,11 @@ jobs:
           cache: npm
           cache-dependency-path: apps/client-ui/package-lock.json
       - name: Install desktop build libraries
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev
+        run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y
+          libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev
+          libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: npm ci
         working-directory: apps/client-ui
       - run: npm test
@@ -45,6 +49,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/client-ui/package-lock.json
+      - run: npm ci
+        working-directory: apps/client-ui
+      - run: npm run build
+        working-directory: apps/client-ui
       - run: cargo build --release -p chatcommons-cli --bin chatcommons-node
       - run: cargo build --release -p chatcommons-desktop --bin chatcommons-desktop
       - name: Package application bundle
@@ -72,6 +85,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/client-ui/package-lock.json
+      - run: npm ci
+        working-directory: apps/client-ui
+      - run: npm run build
+        working-directory: apps/client-ui
       - run: cargo build --release -p chatcommons-cli --bin chatcommons-node
       - run: cargo build --release -p chatcommons-desktop --bin chatcommons-desktop
       - name: Package Windows application

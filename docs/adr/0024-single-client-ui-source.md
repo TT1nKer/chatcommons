@@ -1,6 +1,6 @@
 # ADR 0024: One client UI source for review and desktop
 
-Status: accepted; migration in progress
+Status: accepted; first friend-facing Tauri slice implemented
 
 ## Context
 
@@ -30,8 +30,9 @@ friends-alpha access and download entry. Its “adjust interface” action opens
 shared client UI. Website marketing sections are not rendered inside the
 desktop application.
 
-The current CSS and interaction hierarchy are migration inputs, not a prompt to
-redesign. Migration proceeds from static visual parity to real data:
+The reviewed interaction hierarchy is a migration input, while desktop
+information density, scrolling and input ergonomics remain product concerns.
+Migration proceeds from shared components to real data:
 
 1. Now/home, community, room and composer;
 2. identity and invite onboarding;
@@ -55,9 +56,10 @@ presented as the successor to the reviewed client UI.
 - Review/demo data and real Rust state remain visibly and structurally
   separated.
 - The frontend toolchain adds Node, TypeScript, React and Vite to verification.
-- Tauri integration and trusted desktop packaging remain a following step; this
-  ADR does not claim that the current shared UI already exposes every Rust
-  operation.
-- The existing eframe artifacts remain useful only for protocol testing during
-  migration and will be removed from friend-facing releases once the Tauri path
-  reaches feature parity.
+- Tauri now exposes identity bootstrap, accepted community snapshots,
+  single-use invitation joins, local-first text sends, Home Server sync and
+  private feedback through serialized Rust commands.
+- The Tauri boundary still shells out to the existing diagnostic node and
+  therefore remains replaceable by an in-process core later.
+- The existing eframe artifact is built only as
+  `chatcommons-diagnostic`; it is no longer the friend-facing desktop binary.

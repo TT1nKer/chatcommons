@@ -1,13 +1,21 @@
 import type {
   ClientAdapter,
   ClientSnapshot,
+  FeedbackInput,
+  FeedbackStatus,
   Message,
   SendMessageInput,
 } from '../domain';
 
 const snapshot: ClientSnapshot = {
+  mode: 'demo',
   profileName: '林间',
   profileSymbol: '林',
+  profileId: 'demo-review-identity',
+  connection: {
+    status: 'connected',
+    warningCode: null,
+  },
   communities: [
     {
       id: 'weekend',
@@ -96,6 +104,14 @@ export class DemoAdapter implements ClientAdapter {
     return structuredClone(snapshot);
   }
 
+  async sync(): Promise<ClientSnapshot> {
+    return this.load();
+  }
+
+  async joinCommunity(_inviteCode: string): Promise<ClientSnapshot> {
+    return this.load();
+  }
+
   async sendMessage(input: SendMessageInput): Promise<Message> {
     return {
       id: `demo-${Date.now()}`,
@@ -106,5 +122,17 @@ export class DemoAdapter implements ClientAdapter {
       body: input.body,
       own: true,
     };
+  }
+
+  async submitFeedback(_input: FeedbackInput): Promise<FeedbackStatus> {
+    return {
+      publicId: 'review-demo',
+      status: 'pending',
+      adminReply: '',
+    };
+  }
+
+  async feedbackStatus(): Promise<FeedbackStatus | null> {
+    return null;
   }
 }
