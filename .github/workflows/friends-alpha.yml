@@ -2,6 +2,17 @@ name: Friends alpha
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Build only the required friends-alpha artifact
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - macos
+          - windows
+          - linux-server
   push:
     tags:
       - "v*"
@@ -44,6 +55,7 @@ jobs:
       - run: cargo test --workspace --all-targets
 
   macos:
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'macos'
     needs: verify
     runs-on: macos-15
     steps:
@@ -82,6 +94,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'windows'
     needs: verify
     runs-on: windows-2025
     steps:
@@ -115,6 +128,7 @@ jobs:
           if-no-files-found: error
 
   linux-server:
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'linux-server'
     needs: verify
     runs-on: ubuntu-24.04
     steps:
