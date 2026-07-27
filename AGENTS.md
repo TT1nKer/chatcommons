@@ -37,5 +37,27 @@ These instructions apply to every agent and every file in this repository.
 
 - Before publishing a UI release, verify the primary first-use flow at the
   minimum supported window size as well as the default size.
-- Prefer GitHub Actions for distributable macOS and Windows builds so local
-  build artifacts do not consume the maintainer's disk.
+- Use GitHub Actions sparingly. Run ordinary tests and checks locally; do not
+  trigger hosted CI for small edits or repeated experimentation. Use it only
+  for an intentional distributable macOS/Windows candidate, when the maintainer
+  explicitly requests a build, or when a platform check cannot reasonably be
+  performed locally.
+
+## Engineering quality
+
+- Before editing, read the relevant call path, data structures and tests, then
+  briefly state the understood requirement, root cause, affected modules,
+  smallest architecture-consistent approach, and compatibility or security
+  risks.
+- Prefer correct, direct, intention-revealing code over speculative
+  extensibility. Do not add unrequested features, framework abstractions,
+  patterns, dependencies, unrelated refactors or formatting.
+- Treat files, network data, environment variables and client input as
+  untrusted. Preserve trusted authorization boundaries and never expose secrets
+  or personal data in code, logs or errors.
+- Add behavior-focused tests for defects and important boundaries. Run relevant
+  local tests, type checks, builds and static checks; state anything that could
+  not be verified.
+- Before finishing, self-review for root-cause correctness, simpler possible
+  solutions, dead or duplicate code, races and failure paths, compatibility
+  with APIs/config/data/callers, test coverage, and unrelated changes.

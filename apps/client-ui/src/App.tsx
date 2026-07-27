@@ -89,6 +89,22 @@ interface ReviewWindow extends Window {
 
 type Dialog = 'join' | 'feedback' | null;
 
+interface ComposerKeyState {
+  key: string;
+  shiftKey: boolean;
+  isComposing: boolean;
+  keyCode: number;
+}
+
+export function shouldSubmitComposer(state: ComposerKeyState): boolean {
+  return (
+    state.key === 'Enter'
+    && !state.shiftKey
+    && !state.isComposing
+    && state.keyCode !== 229
+  );
+}
+
 export function App({ adapter }: AppProps) {
   const [locale, setLocale] = useState<Locale>(storedLocale);
   const [snapshot, setSnapshot] = useState<ClientSnapshot | null>(null);
@@ -271,7 +287,12 @@ export function App({ adapter }: AppProps) {
   }
 
   function composerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (shouldSubmitComposer({
+      key: event.key,
+      shiftKey: event.shiftKey,
+      isComposing: event.nativeEvent.isComposing,
+      keyCode: event.keyCode,
+    })) {
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
     }
