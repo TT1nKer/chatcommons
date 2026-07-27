@@ -1,10 +1,10 @@
 import {
-  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
-  type ReactNode,
+  useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from 'react';
@@ -12,17 +12,24 @@ import type {
   ClientAdapter,
   ClientSnapshot,
   Community,
-  FeedbackStatus,
   Locale,
   Message,
   Room,
   Screen,
 } from './domain';
-import { ClientBridgeError } from './domain';
+import { clientFailureCode } from './domain';
+import { DialogFrame } from './components/DialogFrame';
+import { FeedbackFlow } from './feedback/FeedbackFlow';
 import { copyFor, otherLocale } from './i18n';
+import {
+  initialSessionState,
+  roomKey,
+  sessionReducer,
+  type RoomSelection,
+} from './session';
 
 const localeStorageKey = 'chatcommons-locale';
-const screenshotLimit = 1_250_000;
+const automaticSyncDelayMs = 2_000;
 
 function storedLocale(): Locale {
   try {
@@ -30,49 +37,6 @@ function storedLocale(): Locale {
   } catch {
     return 'zh-CN';
   }
-}
-
-function roomKey(communityId: string, roomId: string): string {
-  return `${communityId}:${roomId}`;
-}
-
-function failureCode(reason: unknown): string {
-  return reason instanceof ClientBridgeError ? reason.code : 'unknown';
-}
-
-function readImage(file: File): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    const url = URL.createObjectURL(file);
-    image.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(image);
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('image-decode'));
-    };
-    image.src = url;
-  });
-}
-
-async function prepareScreenshot(file: File): Promise<string> {
-  if (!['image/png', 'image/jpeg'].includes(file.type)) {
-    throw new Error('image-type');
-  }
-  const image = await readImage(file);
-  const scale = Math.min(1, 1280 / Math.max(image.naturalWidth, 1));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('image-canvas');
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  for (const quality of [0.78, 0.64, 0.5]) {
-    const encoded = canvas.toDataURL('image/jpeg', quality);
-    if (encoded.length <= screenshotLimit) return encoded;
-  }
-  throw new Error('image-size');
 }
 
 interface AppProps {
@@ -105,14 +69,23 @@ export function shouldSubmitComposer(state: ComposerKeyState): boolean {
   );
 }
 
+export function shouldScrollToLatest(
+  previousRoomKey: string,
+  activeRoomKey: string,
+  previousMessageCount: number,
+  messages: Message[],
+): boolean {
+  return previousRoomKey !== activeRoomKey
+    || (
+      messages.length > previousMessageCount
+      && messages.at(-1)?.own === true
+    );
+}
+
 export function App({ adapter }: AppProps) {
   const [locale, setLocale] = useState<Locale>(storedLocale);
-  const [snapshot, setSnapshot] = useState<ClientSnapshot | null>(null);
+  const [session, dispatchSession] = useReducer(sessionReducer, initialSessionState);
   const [screen, setScreen] = useState<Screen>('home');
-  const [communityId, setCommunityId] = useState('');
-  const [roomId, setRoomId] = useState('');
-  const [messages, setMessages] = useState<Record<string, Message[]>>({});
-  const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -121,16 +94,17 @@ export function App({ adapter }: AppProps) {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [inviteCode, setInviteCode] = useState('');
   const [joining, setJoining] = useState(false);
-  const [feedbackWhat, setFeedbackWhat] = useState('');
-  const [feedbackExpected, setFeedbackExpected] = useState('');
-  const [feedbackScreenshot, setFeedbackScreenshot] = useState('');
-  const [feedbackScreenshotName, setFeedbackScreenshotName] = useState('');
-  const [feedbackConfirmed, setFeedbackConfirmed] = useState(false);
-  const [feedbackSending, setFeedbackSending] = useState(false);
-  const [feedbackNotice, setFeedbackNotice] = useState('');
-  const [feedbackReceipt, setFeedbackReceipt] = useState<FeedbackStatus | null>(null);
+  const [joinNotice, setJoinNotice] = useState('');
   const toastTimer = useRef<number | undefined>(undefined);
+  const syncInFlight = useRef(false);
   const copy = copyFor(locale);
+  const {
+    snapshot,
+    selection,
+    messages,
+    drafts,
+  } = session;
+  const { communityId, roomId } = selection;
 
   const community = useMemo(
     () => snapshot?.communities.find((item) => item.id === communityId) ?? null,
@@ -143,38 +117,66 @@ export function App({ adapter }: AppProps) {
   const currentMessages = community && room
     ? messages[roomKey(community.id, room.id)] ?? []
     : [];
+  const activeRoomKey = community && room ? roomKey(community.id, room.id) : '';
+  const draft = activeRoomKey ? drafts[activeRoomKey] ?? '' : '';
 
-  function announce(message: string) {
+  const announce = useCallback((message: string) => {
     setToast(message);
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(''), 2400);
+  }, []);
+
+  const adoptSnapshot = useCallback((next: ClientSnapshot) => {
+    dispatchSession({ type: 'adoptSnapshot', snapshot: next });
+    if (next.communities.length === 0) {
+      setScreen('home');
+    }
+  }, []);
+
+  function setActiveRoom(next: RoomSelection) {
+    dispatchSession({ type: 'selectRoom', selection: next });
   }
 
-  function adoptSnapshot(next: ClientSnapshot) {
-    setSnapshot(next);
-    setMessages(next.messagesByRoom);
-    const firstCommunity = next.communities[0];
-    if (!firstCommunity) {
-      setCommunityId('');
-      setRoomId('');
-      setScreen('home');
-      return;
-    }
-    const retainedCommunity = next.communities.find((item) => item.id === communityId)
-      ?? firstCommunity;
-    const retainedRoom = retainedCommunity.rooms.find((item) => item.id === roomId)
-      ?? retainedCommunity.rooms[0];
-    setCommunityId(retainedCommunity.id);
-    setRoomId(retainedRoom?.id ?? '');
+  function setActiveDraft(value: string) {
+    if (!activeRoomKey) return;
+    dispatchSession({
+      type: 'updateDraft',
+      roomKey: activeRoomKey,
+      value,
+    });
   }
+
+  const synchronize = useCallback(async (showSuccess = true) => {
+    if (syncInFlight.current) return;
+    syncInFlight.current = true;
+    setSyncing(true);
+    try {
+      const next = await adapter.sync();
+      adoptSnapshot(next);
+      if (showSuccess) {
+        announce(next.connection.status === 'degraded' ? copy.syncDegraded : copy.synchronized);
+      }
+    } catch (reason) {
+      if (showSuccess) {
+        announce(copy.errorMessage(clientFailureCode(reason)));
+      }
+    } finally {
+      syncInFlight.current = false;
+      setSyncing(false);
+    }
+  }, [adapter, adoptSnapshot, announce, copy]);
 
   async function load() {
     setLoading(true);
     setErrorCode('');
     try {
-      adoptSnapshot(await adapter.load());
+      const initial = await adapter.load();
+      adoptSnapshot(initial);
+      if (adapter.kind === 'tauri' && initial.communities.length > 0) {
+        void synchronize(false);
+      }
     } catch (reason) {
-      setErrorCode(failureCode(reason));
+      setErrorCode(clientFailureCode(reason));
     } finally {
       setLoading(false);
     }
@@ -188,6 +190,28 @@ export function App({ adapter }: AppProps) {
     // The adapter is selected once at boot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapter]);
+
+  useEffect(() => {
+    if (adapter.kind !== 'tauri' || !snapshot?.communities.length) {
+      return undefined;
+    }
+
+    let stopped = false;
+    let timer: number | undefined;
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        void synchronize(false).finally(() => {
+          if (!stopped) schedule();
+        });
+      }, automaticSyncDelayMs);
+    };
+    schedule();
+
+    return () => {
+      stopped = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [adapter.kind, snapshot?.communities.length, synchronize]);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -217,40 +241,31 @@ export function App({ adapter }: AppProps) {
   }
 
   function openCommunity(next: Community) {
-    setCommunityId(next.id);
-    setRoomId(next.rooms[0]?.id ?? '');
+    setActiveRoom({
+      communityId: next.id,
+      roomId: next.rooms[0]?.id ?? '',
+    });
     setScreen('community');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     window.scrollTo({ top: 0, behavior: reducedMotion ? 'auto' : 'smooth' });
-  }
-
-  async function synchronize() {
-    if (syncing) return;
-    setSyncing(true);
-    try {
-      const next = await adapter.sync();
-      adoptSnapshot(next);
-      announce(next.connection.status === 'degraded' ? copy.syncDegraded : copy.synchronized);
-    } catch (reason) {
-      announce(copy.errorMessage(failureCode(reason)));
-    } finally {
-      setSyncing(false);
-    }
   }
 
   async function joinCommunity(event: FormEvent) {
     event.preventDefault();
     if (!inviteCode.trim() || joining) return;
     setJoining(true);
-    setFeedbackNotice('');
+    setJoinNotice('');
     try {
       const next = await adapter.joinCommunity(inviteCode.trim());
       adoptSnapshot(next);
       setInviteCode('');
       setDialog(null);
+      if (next.communities.length > 0) {
+        setScreen('community');
+      }
       announce(copy.joined);
     } catch (reason) {
-      setFeedbackNotice(copy.errorMessage(failureCode(reason)));
+      setJoinNotice(copy.errorMessage(clientFailureCode(reason)));
     } finally {
       setJoining(false);
     }
@@ -258,8 +273,10 @@ export function App({ adapter }: AppProps) {
 
   async function submitMessage(event: FormEvent) {
     event.preventDefault();
-    if (!community || !room || !draft.trim() || sending) return;
+    if (!community || !room || !activeRoomKey || !draft.trim() || sending) return;
+    const submittedDraft = draft;
     const body = draft.trim();
+    const submittedRoomKey = activeRoomKey;
     setSending(true);
     try {
       const message = await adapter.sendMessage({
@@ -267,20 +284,22 @@ export function App({ adapter }: AppProps) {
         roomId: room.id,
         body,
       });
-      const key = roomKey(community.id, room.id);
-      setMessages((current) => ({
-        ...current,
-        [key]: [...(current[key] ?? []), message],
-      }));
-      setDraft('');
+      dispatchSession({
+        type: 'appendMessage',
+        roomKey: submittedRoomKey,
+        message,
+      });
+      dispatchSession({
+        type: 'clearSubmittedDraft',
+        roomKey: submittedRoomKey,
+        submittedDraft,
+      });
       announce(adapter.kind === 'review' ? copy.demoSaved : copy.savedLocally);
       if (adapter.kind === 'tauri') {
-        void adapter.sync().then(adoptSnapshot).catch(() => {
-          announce(copy.syncDegraded);
-        });
+        void synchronize(false);
       }
     } catch (reason) {
-      announce(copy.errorMessage(failureCode(reason)));
+      announce(copy.errorMessage(clientFailureCode(reason)));
     } finally {
       setSending(false);
     }
@@ -298,70 +317,20 @@ export function App({ adapter }: AppProps) {
     }
   }
 
-  async function openFeedback() {
-    setDialog('feedback');
-    setFeedbackNotice('');
-    try {
-      setFeedbackReceipt(await adapter.feedbackStatus());
-    } catch {
-      // A missing receipt or offline status check must not block a new report.
-    }
-  }
-
-  async function chooseScreenshot(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    setFeedbackNotice(copy.preparingScreenshot);
-    try {
-      setFeedbackScreenshot(await prepareScreenshot(file));
-      setFeedbackScreenshotName(file.name);
-      setFeedbackNotice(copy.screenshotReady);
-    } catch {
-      setFeedbackScreenshot('');
-      setFeedbackScreenshotName('');
-      setFeedbackNotice(copy.screenshotInvalid);
-    }
-  }
-
-  async function sendFeedback(event: FormEvent) {
-    event.preventDefault();
-    if (
-      !feedbackWhat.trim()
-      || !feedbackExpected.trim()
-      || !feedbackConfirmed
-      || feedbackSending
-    ) {
-      setFeedbackNotice(copy.feedbackIncomplete);
-      return;
-    }
-    setFeedbackSending(true);
-    setFeedbackNotice(copy.feedbackSending);
-    try {
-      const receipt = await adapter.submitFeedback({
-        whatHappened: feedbackWhat,
-        expected: feedbackExpected,
-        screen: screen === 'community' && community && room
-          ? `community:${community.id}:room:${room.id}`
-          : 'home',
-        screenshot: feedbackScreenshot,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-        confirmed: feedbackConfirmed,
-      });
-      setFeedbackReceipt(receipt);
-      setFeedbackWhat('');
-      setFeedbackExpected('');
-      setFeedbackScreenshot('');
-      setFeedbackScreenshotName('');
-      setFeedbackConfirmed(false);
-      setFeedbackNotice(copy.feedbackDelivered);
-    } catch (reason) {
-      setFeedbackNotice(copy.errorMessage(failureCode(reason)));
-    } finally {
-      setFeedbackSending(false);
-    }
-  }
+  const feedbackScreen = errorCode
+    ? `error:${errorCode}`
+    : screen === 'community' && community && room
+      ? `community:${community.id}:room:${room.id}`
+      : 'home';
+  const feedbackFlow = (
+    <FeedbackFlow
+      open={dialog === 'feedback'}
+      adapter={adapter}
+      copy={copy}
+      screenContext={feedbackScreen}
+      onClose={() => setDialog(null)}
+    />
+  );
 
   if (loading) {
     return (
@@ -388,33 +357,16 @@ export function App({ adapter }: AppProps) {
             <button className="primary-action" type="button" onClick={() => void load()}>
               {copy.retry}
             </button>
-            <button className="secondary-action" type="button" onClick={() => void openFeedback()}>
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={() => setDialog('feedback')}
+            >
               {copy.feedback}
             </button>
           </div>
         </main>
-        {dialog === 'feedback' && (
-          <FeedbackDialog
-            copy={copy}
-            whatHappened={feedbackWhat}
-            expected={feedbackExpected}
-            screenshotName={feedbackScreenshotName}
-            confirmed={feedbackConfirmed}
-            sending={feedbackSending}
-            notice={feedbackNotice}
-            receipt={feedbackReceipt}
-            onWhatHappened={setFeedbackWhat}
-            onExpected={setFeedbackExpected}
-            onScreenshot={chooseScreenshot}
-            onRemoveScreenshot={() => {
-              setFeedbackScreenshot('');
-              setFeedbackScreenshotName('');
-            }}
-            onConfirmed={setFeedbackConfirmed}
-            onClose={() => setDialog(null)}
-            onSubmit={sendFeedback}
-          />
-        )}
+        {feedbackFlow}
       </div>
     );
   }
@@ -431,13 +383,15 @@ export function App({ adapter }: AppProps) {
           onHome={() => setScreen('home')}
           onCommunity={openCommunity}
           onRoom={(nextCommunity, nextRoom) => {
-            setCommunityId(nextCommunity.id);
-            setRoomId(nextRoom.id);
+            setActiveRoom({
+              communityId: nextCommunity.id,
+              roomId: nextRoom.id,
+            });
             setScreen('community');
           }}
           onJoin={() => setDialog('join')}
           onCreate={() => announce(copy.notConnectedYet)}
-          onFeedback={() => void openFeedback()}
+          onFeedback={() => setDialog('feedback')}
         />
 
         <section className="client-main">
@@ -497,10 +451,11 @@ export function App({ adapter }: AppProps) {
               <CommunityScreen
                 copy={copy}
                 room={room}
+                activeRoomKey={activeRoomKey}
                 messages={currentMessages}
                 draft={draft}
                 sending={sending}
-                onDraft={setDraft}
+                onDraft={setActiveDraft}
                 onSubmit={submitMessage}
                 onComposerKeyDown={composerKeyDown}
                 onPendingAction={() => announce(copy.notConnectedYet)}
@@ -522,35 +477,14 @@ export function App({ adapter }: AppProps) {
           copy={copy}
           inviteCode={inviteCode}
           joining={joining}
-          notice={feedbackNotice}
+          notice={joinNotice}
           onInviteCode={setInviteCode}
           onClose={() => setDialog(null)}
           onSubmit={joinCommunity}
         />
       )}
 
-      {dialog === 'feedback' && (
-        <FeedbackDialog
-          copy={copy}
-          whatHappened={feedbackWhat}
-          expected={feedbackExpected}
-          screenshotName={feedbackScreenshotName}
-          confirmed={feedbackConfirmed}
-          sending={feedbackSending}
-          notice={feedbackNotice}
-          receipt={feedbackReceipt}
-          onWhatHappened={setFeedbackWhat}
-          onExpected={setFeedbackExpected}
-          onScreenshot={chooseScreenshot}
-          onRemoveScreenshot={() => {
-            setFeedbackScreenshot('');
-            setFeedbackScreenshotName('');
-          }}
-          onConfirmed={setFeedbackConfirmed}
-          onClose={() => setDialog(null)}
-          onSubmit={sendFeedback}
-        />
-      )}
+      {feedbackFlow}
 
       <div className={`toast ${toast ? 'show' : ''}`} role="status" aria-live="polite">
         {toast}
@@ -753,6 +687,7 @@ function HomeScreen({
 interface CommunityScreenProps {
   copy: AppCopy;
   room: Room;
+  activeRoomKey: string;
   messages: Message[];
   draft: string;
   sending: boolean;
@@ -765,6 +700,7 @@ interface CommunityScreenProps {
 function CommunityScreen({
   copy,
   room,
+  activeRoomKey,
   messages,
   draft,
   sending,
@@ -773,9 +709,27 @@ function CommunityScreen({
   onComposerKeyDown,
   onPendingAction,
 }: CommunityScreenProps) {
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const previousRoomKey = useRef('');
+  const previousMessageCount = useRef(0);
+
+  useEffect(() => {
+    if (shouldScrollToLatest(
+      previousRoomKey.current,
+      activeRoomKey,
+      previousMessageCount.current,
+      messages,
+    )) {
+      const list = messageListRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    }
+    previousRoomKey.current = activeRoomKey;
+    previousMessageCount.current = messages.length;
+  }, [activeRoomKey, messages]);
+
   return (
     <section className="conversation-screen" aria-label={copy.messages}>
-      <div className="message-list" aria-live="polite">
+      <div className="message-list" aria-live="polite" ref={messageListRef}>
         {messages.length === 0 && (
           <div className="conversation-empty">
             <span>#</span>
@@ -843,32 +797,6 @@ function EmptyState({
   );
 }
 
-function DialogFrame({
-  title,
-  closeLabel,
-  onClose,
-  children,
-}: {
-  title: string;
-  closeLabel: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div className="client-dialog-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <section className="client-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
-        <header>
-          <h2 id="dialog-title">{title}</h2>
-          <button type="button" onClick={onClose} aria-label={closeLabel}>×</button>
-        </header>
-        {children}
-      </section>
-    </div>
-  );
-}
-
 function JoinDialog({
   copy,
   inviteCode,
@@ -910,111 +838,6 @@ function JoinDialog({
           <button className="primary-action" type="submit" disabled={joining || !inviteCode.trim()}>
             {joining ? copy.joining : copy.joinAction}
           </button>
-        </footer>
-      </form>
-    </DialogFrame>
-  );
-}
-
-function FeedbackDialog({
-  copy,
-  whatHappened,
-  expected,
-  screenshotName,
-  confirmed,
-  sending,
-  notice,
-  receipt,
-  onWhatHappened,
-  onExpected,
-  onScreenshot,
-  onRemoveScreenshot,
-  onConfirmed,
-  onClose,
-  onSubmit,
-}: {
-  copy: AppCopy;
-  whatHappened: string;
-  expected: string;
-  screenshotName: string;
-  confirmed: boolean;
-  sending: boolean;
-  notice: string;
-  receipt: FeedbackStatus | null;
-  onWhatHappened: (value: string) => void;
-  onExpected: (value: string) => void;
-  onScreenshot: (event: ChangeEvent<HTMLInputElement>) => void;
-  onRemoveScreenshot: () => void;
-  onConfirmed: (value: boolean) => void;
-  onClose: () => void;
-  onSubmit: (event: FormEvent) => void;
-}) {
-  return (
-    <DialogFrame title={copy.feedbackTitle} closeLabel={copy.close} onClose={onClose}>
-      <form className="dialog-form feedback-form" onSubmit={onSubmit}>
-        <div className="dialog-scroll">
-          <p>{copy.feedbackPrivacy}</p>
-          <label>
-            <span>{copy.whatHappened}</span>
-            <textarea
-              rows={6}
-              value={whatHappened}
-              placeholder={copy.whatHappenedHint}
-              onChange={(event) => onWhatHappened(event.target.value)}
-            />
-          </label>
-          <label>
-            <span>{copy.whatExpected}</span>
-            <textarea
-              rows={5}
-              value={expected}
-              placeholder={copy.whatExpectedHint}
-              onChange={(event) => onExpected(event.target.value)}
-            />
-          </label>
-          <div className="screenshot-control">
-            <span>{copy.optionalScreenshot}</span>
-            {screenshotName ? (
-              <div>
-                <strong>{screenshotName}</strong>
-                <button type="button" onClick={onRemoveScreenshot}>{copy.remove}</button>
-              </div>
-            ) : (
-              <label className="secondary-action">
-                {copy.chooseScreenshot}
-                <input type="file" accept="image/png,image/jpeg" onChange={onScreenshot} />
-              </label>
-            )}
-            <small>{copy.screenshotPrivacy}</small>
-          </div>
-          {receipt && (
-            <div className="feedback-receipt">
-              <strong>{copy.feedbackReference} · {receipt.publicId}</strong>
-              <span>{copy.feedbackState(receipt.status)}</span>
-              {receipt.adminReply && <p>{copy.feedbackReply}: {receipt.adminReply}</p>}
-            </div>
-          )}
-          {notice && <p className="dialog-notice" role="status">{notice}</p>}
-        </div>
-        <footer className="feedback-footer">
-          <label className="confirmation">
-            <input
-              type="checkbox"
-              checked={confirmed}
-              onChange={(event) => onConfirmed(event.target.checked)}
-            />
-            <span>{copy.feedbackConfirmation}</span>
-          </label>
-          <div>
-            <button className="secondary-action" type="button" onClick={onClose}>{copy.cancel}</button>
-            <button
-              className="primary-action"
-              type="submit"
-              disabled={sending || !confirmed || !whatHappened.trim() || !expected.trim()}
-            >
-              {sending ? copy.feedbackSending : copy.sendFeedback}
-            </button>
-          </div>
         </footer>
       </form>
     </DialogFrame>

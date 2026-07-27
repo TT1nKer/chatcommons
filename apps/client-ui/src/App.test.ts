@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { shouldSubmitComposer } from './App';
+import {
+  shouldScrollToLatest,
+  shouldSubmitComposer,
+} from './App';
 
 describe('composer keyboard behavior', () => {
   it('submits a normal Enter press', () => {
@@ -33,5 +36,22 @@ describe('composer keyboard behavior', () => {
       isComposing: false,
       keyCode: 13,
     })).toBe(false);
+  });
+});
+
+describe('message list behavior', () => {
+  it('scrolls for a room change or a newly sent own message', () => {
+    const ownMessage = {
+      id: 'message',
+      author: 'tester',
+      avatar: 'T',
+      tone: 'self' as const,
+      sentAt: 'now',
+      body: 'hello',
+      own: true,
+    };
+    expect(shouldScrollToLatest('room-a', 'room-b', 0, [])).toBe(true);
+    expect(shouldScrollToLatest('room-a', 'room-a', 0, [ownMessage])).toBe(true);
+    expect(shouldScrollToLatest('room-a', 'room-a', 1, [ownMessage])).toBe(false);
   });
 });

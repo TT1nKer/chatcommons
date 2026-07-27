@@ -59,6 +59,21 @@ presented as the successor to the reviewed client UI.
 - Tauri now exposes identity bootstrap, accepted community snapshots,
   single-use invitation joins, local-first text sends, Home Server sync and
   private feedback through serialized Rust commands.
+- Initial render uses local validated state. Home Server synchronization runs
+  afterward with both protocol and process deadlines, so unavailable
+  infrastructure cannot hold the loading screen indefinitely.
+- A joined friends-alpha client repeats bounded synchronization two seconds
+  after the previous attempt finishes. Manual refresh, post-send sync and the
+  receive loop share one frontend single-flight guard.
+- Secrets and message content cross the sidecar boundary through bounded stdin,
+  not operating-system process arguments.
+- Optional feedback networking has an independent bounded worker and cannot
+  block protocol-state operations.
+- Room selection, synchronized messages and room-keyed drafts share one reducer
+  boundary, so delayed synchronization cannot overwrite a newer room choice and
+  finishing one send cannot clear another room's draft.
+- DOM-level client tests cover room switching, delayed synchronization, IME
+  composition, sent-message scrolling and untruncated feedback submission.
 - The Tauri boundary still shells out to the existing diagnostic node and
   therefore remains replaceable by an in-process core later.
 - The existing eframe artifact is built only as

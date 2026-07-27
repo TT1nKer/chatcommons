@@ -3,19 +3,36 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs,
+    io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output, Stdio},
     sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
 };
+use tempfile::NamedTempFile;
 
 const CONFIG_VERSION: u16 = 1;
 const FEEDBACK_ENDPOINT: &str = "https://ttinker.net/chatcommons/api/app-feedback";
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const SYNC_IDLE_TIMEOUT_MS: &str = "1500";
+const SYNC_OVERALL_TIMEOUT_MS: &str = "5000";
+const SYNC_PROCESS_TIMEOUT: Duration = Duration::from_secs(7);
+const JOIN_OVERALL_TIMEOUT_MS: &str = "15000";
+const JOIN_PROCESS_TIMEOUT: Duration = Duration::from_secs(17);
+const MESSAGE_PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
+const FEEDBACK_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
+const FEEDBACK_CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
+const FEEDBACK_RESPONSE_LIMIT: u64 = 64 * 1024;
+const MAX_FEEDBACK_SCREENSHOT_BYTES: usize = 2 * 1024 * 1024;
+const CLIENT_MESSAGE_LIMIT: &str = "500";
+const MAX_LOCAL_METADATA_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeState {
     paths: Paths,
     operation: Arc<Mutex<()>>,
+    feedback_agent: ureq::Agent,
 }
 
 impl RuntimeState {
@@ -23,10 +40,11 @@ impl RuntimeState {
         Self {
             paths: Paths::discover(),
             operation: Arc::new(Mutex::new(())),
+            feedback_agent: feedback_agent(),
         }
     }
 
-    async fn run<T, F>(&self, operation: F) -> Result<T, ClientError>
+    async fn run_serialized<T, F>(&self, operation: F) -> Result<T, ClientError>
     where
         T: Send + 'static,
         F: FnOnce(&Paths) -> Result<T, ClientError> + Send + 'static,
@@ -43,37 +61,54 @@ impl RuntimeState {
         .map_err(|error| ClientError::new("runtimeTask", redact_diagnostic(&error.to_string())))?
     }
 
-    pub async fn snapshot(&self, synchronize: bool) -> Result<ClientSnapshot, ClientError> {
-        self.run(move |paths| load_snapshot(paths, synchronize))
+    pub async fn local_snapshot(&self) -> Result<ClientSnapshot, ClientError> {
+        self.run_serialized(|paths| load_snapshot(paths, SnapshotConnection::Local))
             .await
     }
 
+    pub async fn synchronized_snapshot(&self) -> Result<ClientSnapshot, ClientError> {
+        self.run_serialized(|paths| {
+            let connection = match synchronize_with_home_server(paths) {
+                Ok(()) => SnapshotConnection::Connected,
+                // A failed sync never invalidates the already-validated local DAG.
+                // The UI receives a degraded snapshot instead of losing local access.
+                Err(_) => SnapshotConnection::Degraded,
+            };
+            load_snapshot(paths, connection)
+        })
+        .await
+    }
+
     pub async fn join(&self, invite_code: String) -> Result<ClientSnapshot, ClientError> {
-        self.run(move |paths| {
+        self.run_serialized(move |paths| {
             let invite = invite_code.trim();
             if invite.is_empty() {
                 return Err(ClientError::new("inviteEmpty", "invite is empty"));
             }
             ensure_identity(paths)?;
-            let output = run_node(
+            let output = run_node_with_input(
                 paths,
                 &[
                     "join",
                     "--state",
                     path_text(&paths.state)?,
-                    "--invite-code",
-                    invite,
+                    "--stdin-field",
+                    "invite-code",
+                    "--overall-timeout-ms",
+                    JOIN_OVERALL_TIMEOUT_MS,
                 ],
+                invite.as_bytes(),
+                JOIN_PROCESS_TIMEOUT,
             )?;
             let community_id = output_field(&output, "COMMUNITY_ID")?;
             save_config(&paths.config, Some(community_id))?;
-            load_snapshot(paths, false)
+            load_snapshot(paths, SnapshotConnection::Local)
         })
         .await
     }
 
     pub async fn send(&self, input: SendMessageInput) -> Result<ClientMessage, ClientError> {
-        self.run(move |paths| {
+        self.run_serialized(move |paths| {
             let config = load_config(&paths.config)?;
             let Some(configured_community) = config.community_id else {
                 return Err(ClientError::new(
@@ -91,7 +126,7 @@ impl RuntimeState {
             if body.is_empty() {
                 return Err(ClientError::new("messageEmpty", "message is empty"));
             }
-            let output = run_node(
+            let output = run_node_with_input(
                 paths,
                 &[
                     "send-message",
@@ -101,9 +136,11 @@ impl RuntimeState {
                     &input.community_id,
                     "--channel",
                     &input.room_id,
-                    "--text",
-                    body,
+                    "--stdin-field",
+                    "text",
                 ],
+                body.as_bytes(),
+                MESSAGE_PROCESS_TIMEOUT,
             )?;
             let event_id = output_field(&output, "MESSAGE_EVENT_ID")?;
             let identity = identity_info(paths)?;
@@ -124,11 +161,23 @@ impl RuntimeState {
         &self,
         input: FeedbackInput,
     ) -> Result<FeedbackStatus, ClientError> {
-        self.run(move |paths| submit_feedback(paths, input)).await
+        let paths = self.paths.clone();
+        let agent = self.feedback_agent.clone();
+        tauri::async_runtime::spawn_blocking(move || submit_feedback(&agent, &paths, input))
+            .await
+            .map_err(|error| {
+                ClientError::new("runtimeTask", redact_diagnostic(&error.to_string()))
+            })?
     }
 
     pub async fn feedback_status(&self) -> Result<Option<FeedbackStatus>, ClientError> {
-        self.run(refresh_feedback_status).await
+        let paths = self.paths.clone();
+        let agent = self.feedback_agent.clone();
+        tauri::async_runtime::spawn_blocking(move || refresh_feedback_status(&agent, &paths))
+            .await
+            .map_err(|error| {
+                ClientError::new("runtimeTask", redact_diagnostic(&error.to_string()))
+            })?
     }
 }
 
@@ -205,6 +254,13 @@ pub struct ClientSnapshot {
 struct ConnectionState {
     status: &'static str,
     warning_code: Option<&'static str>,
+}
+
+#[derive(Clone, Copy)]
+enum SnapshotConnection {
+    Local,
+    Connected,
+    Degraded,
 }
 
 #[derive(Debug, Serialize)]
@@ -374,10 +430,38 @@ fn identity_info(paths: &Paths) -> Result<IdentityInfo, ClientError> {
     })
 }
 
-fn load_snapshot(paths: &Paths, synchronize: bool) -> Result<ClientSnapshot, ClientError> {
+fn synchronize_with_home_server(paths: &Paths) -> Result<(), ClientError> {
+    let config = load_or_recover_config(paths)?;
+    let community_id = config
+        .community_id
+        .ok_or_else(|| ClientError::new("communityMissing", "no community is configured"))?;
+    run_node_with_timeout(
+        paths,
+        &[
+            "sync-home-server",
+            "--state",
+            path_text(&paths.state)?,
+            "--community",
+            &community_id,
+            "--listen",
+            "/ip4/0.0.0.0/udp/0/quic-v1",
+            "--idle-timeout-ms",
+            SYNC_IDLE_TIMEOUT_MS,
+            "--overall-timeout-ms",
+            SYNC_OVERALL_TIMEOUT_MS,
+        ],
+        SYNC_PROCESS_TIMEOUT,
+    )
+    .map(|_| ())
+}
+
+fn load_snapshot(
+    paths: &Paths,
+    connection: SnapshotConnection,
+) -> Result<ClientSnapshot, ClientError> {
     ensure_identity(paths)?;
     let identity = identity_info(paths)?;
-    let config = load_config(&paths.config)?;
+    let config = load_or_recover_config(paths)?;
     let Some(community_id) = config.community_id else {
         return Ok(ClientSnapshot {
             mode: "local",
@@ -392,27 +476,6 @@ fn load_snapshot(paths: &Paths, synchronize: bool) -> Result<ClientSnapshot, Cli
             messages_by_room: BTreeMap::new(),
         });
     };
-
-    let sync_warning = synchronize
-        .then(|| {
-            run_node(
-                paths,
-                &[
-                    "sync-home-server",
-                    "--state",
-                    path_text(&paths.state)?,
-                    "--community",
-                    &community_id,
-                    "--listen",
-                    "/ip4/0.0.0.0/udp/0/quic-v1",
-                    "--idle-timeout-ms",
-                    "1500",
-                ],
-            )
-            .map(|_| ())
-        })
-        .transpose()
-        .err();
 
     let info_output = run_node(
         paths,
@@ -451,6 +514,8 @@ fn load_snapshot(paths: &Paths, synchronize: bool) -> Result<ClientSnapshot, Cli
             path_text(&paths.state)?,
             "--community",
             &community_id,
+            "--limit",
+            CLIENT_MESSAGE_LIMIT,
         ],
     )?;
     let channels: Vec<Channel> = serde_json::from_str(&channels_output)
@@ -459,26 +524,33 @@ fn load_snapshot(paths: &Paths, synchronize: bool) -> Result<ClientSnapshot, Cli
         .map_err(|error| ClientError::new("messageData", error.to_string()))?;
 
     let mut messages_by_room = BTreeMap::new();
+    let mut message_room_keys = BTreeMap::new();
     for channel in &channels {
         let key = room_key(&community_id, &channel.channel_id);
-        let messages = stored_messages
-            .iter()
-            .filter(|message| message.channel_id == channel.channel_id)
-            .map(|message| ClientMessage {
+        message_room_keys.insert(channel.channel_id.as_str(), key.clone());
+        messages_by_room.insert(key, Vec::new());
+    }
+    for message in &stored_messages {
+        let Some(key) = message_room_keys.get(message.channel_id.as_str()) else {
+            continue;
+        };
+        let own = message.author_id == identity.user_id;
+        messages_by_room
+            .get_mut(key)
+            .ok_or_else(|| ClientError::new("messageData", "message room index is inconsistent"))?
+            .push(ClientMessage {
                 id: message.event_id.clone(),
                 author: short_id(&message.author_id),
                 avatar: avatar_symbol(&message.author_id),
-                tone: if message.author_id == identity.user_id {
+                tone: if own {
                     "self"
                 } else {
                     author_tone(&message.author_id)
                 },
                 sent_at: message_time(message.timestamp_ms),
                 body: message.text.clone(),
-                own: message.author_id == identity.user_id,
-            })
-            .collect();
-        messages_by_room.insert(key, messages);
+                own,
+            });
     }
 
     let latest = stored_messages.last();
@@ -510,12 +582,13 @@ fn load_snapshot(paths: &Paths, synchronize: bool) -> Result<ClientSnapshot, Cli
         profile_symbol: avatar_symbol(&identity.user_id),
         profile_id: identity.user_id,
         connection: ConnectionState {
-            status: if sync_warning.is_some() {
-                "degraded"
-            } else {
-                "connected"
+            status: match connection {
+                SnapshotConnection::Local => "local",
+                SnapshotConnection::Connected => "connected",
+                SnapshotConnection::Degraded => "degraded",
             },
-            warning_code: sync_warning.as_ref().map(|_| "homeServerUnavailable"),
+            warning_code: matches!(connection, SnapshotConnection::Degraded)
+                .then_some("homeServerUnavailable"),
         },
         communities: vec![ClientCommunity {
             id: community_id,
@@ -539,8 +612,7 @@ fn load_config(path: &Path) -> Result<ClientConfig, ClientError> {
             community_id: None,
         });
     }
-    let bytes = fs::read(path)
-        .map_err(|error| ClientError::new("configRead", redact_diagnostic(&error.to_string())))?;
+    let bytes = read_bounded_file(path, MAX_LOCAL_METADATA_BYTES, "configRead")?;
     let config: ClientConfig = serde_json::from_slice(&bytes)
         .map_err(|error| ClientError::new("configInvalid", error.to_string()))?;
     if config.version != CONFIG_VERSION {
@@ -550,6 +622,37 @@ fn load_config(path: &Path) -> Result<ClientConfig, ClientError> {
         ));
     }
     Ok(config)
+}
+
+fn load_or_recover_config(paths: &Paths) -> Result<ClientConfig, ClientError> {
+    let config = load_config(&paths.config)?;
+    if config.community_id.is_some() {
+        return Ok(config);
+    }
+    let output = run_node(
+        paths,
+        &[
+            "list-joined-communities",
+            "--state",
+            path_text(&paths.state)?,
+        ],
+    )?;
+    let joined: Vec<String> = serde_json::from_str(&output)
+        .map_err(|error| ClientError::new("communityData", error.to_string()))?;
+    match joined.as_slice() {
+        [] => Ok(config),
+        [community_id] => {
+            save_config(&paths.config, Some(community_id.clone()))?;
+            Ok(ClientConfig {
+                version: CONFIG_VERSION,
+                community_id: Some(community_id.clone()),
+            })
+        }
+        _ => Err(ClientError::new(
+            "communityData",
+            "multiple local communities require an explicit client selection",
+        )),
+    }
 }
 
 fn save_config(path: &Path, community_id: Option<String>) -> Result<(), ClientError> {
@@ -563,8 +666,7 @@ fn save_config(path: &Path, community_id: Option<String>) -> Result<(), ClientEr
         community_id,
     })
     .map_err(|error| ClientError::new("configEncode", error.to_string()))?;
-    fs::write(path, bytes)
-        .map_err(|error| ClientError::new("configWrite", redact_diagnostic(&error.to_string())))
+    atomic_write(path, &bytes, "configWrite")
 }
 
 fn run_node(paths: &Paths, arguments: &[&str]) -> Result<String, ClientError> {
@@ -577,6 +679,109 @@ fn run_node(paths: &Paths, arguments: &[&str]) -> Result<String, ClientError> {
                 redact_diagnostic(&format!("could not start protocol process: {error}")),
             )
         })?;
+    parse_node_output(output)
+}
+
+fn run_node_with_input(
+    paths: &Paths,
+    arguments: &[&str],
+    input: &[u8],
+    timeout: Duration,
+) -> Result<String, ClientError> {
+    let mut child = Command::new(&paths.node)
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(node_start_error)?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| ClientError::new("nodeInput", "protocol input pipe is unavailable"))?;
+    stdin
+        .write_all(input)
+        .map_err(|error| ClientError::new("nodeInput", redact_diagnostic(&error.to_string())))?;
+    drop(stdin);
+    parse_node_output(wait_with_timeout(child, timeout)?)
+}
+
+fn run_node_with_timeout(
+    paths: &Paths,
+    arguments: &[&str],
+    timeout: Duration,
+) -> Result<String, ClientError> {
+    let child = Command::new(&paths.node)
+        .args(arguments)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(node_start_error)?;
+    parse_node_output(wait_with_timeout(child, timeout)?)
+}
+
+fn wait_with_timeout(
+    mut child: std::process::Child,
+    timeout: Duration,
+) -> Result<Output, ClientError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| ClientError::new("nodeWait", redact_diagnostic(&error.to_string())))?
+            .is_some()
+        {
+            return child.wait_with_output().map_err(|error| {
+                ClientError::new("nodeWait", redact_diagnostic(&error.to_string()))
+            });
+        }
+        if Instant::now() >= deadline {
+            if let Err(kill_error) = child.kill() {
+                let still_running = child
+                    .try_wait()
+                    .map_err(|wait_error| {
+                        ClientError::new(
+                            "nodeTerminate",
+                            redact_diagnostic(&format!(
+                                "could not inspect timed-out protocol process: {wait_error}"
+                            )),
+                        )
+                    })?
+                    .is_none();
+                if still_running {
+                    return Err(ClientError::new(
+                        "nodeTerminate",
+                        redact_diagnostic(&format!(
+                            "could not terminate timed-out protocol process: {kill_error}"
+                        )),
+                    ));
+                }
+            }
+            child.wait().map_err(|error| {
+                ClientError::new(
+                    "nodeTerminate",
+                    redact_diagnostic(&format!(
+                        "could not reap timed-out protocol process: {error}"
+                    )),
+                )
+            })?;
+            return Err(ClientError::new(
+                "nodeTimeout",
+                "protocol operation exceeded its local deadline",
+            ));
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn node_start_error(error: std::io::Error) -> ClientError {
+    ClientError::new(
+        "nodeUnavailable",
+        redact_diagnostic(&format!("could not start protocol process: {error}")),
+    )
+}
+
+fn parse_node_output(output: Output) -> Result<String, ClientError> {
     if output.status.success() {
         String::from_utf8(output.stdout)
             .map_err(|error| ClientError::new("nodeOutput", error.to_string()))
@@ -690,7 +895,19 @@ fn redact_diagnostic(value: &str) -> String {
         .join(" ")
 }
 
-fn submit_feedback(paths: &Paths, input: FeedbackInput) -> Result<FeedbackStatus, ClientError> {
+fn feedback_agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(FEEDBACK_REQUEST_TIMEOUT))
+        .timeout_connect(Some(FEEDBACK_CONNECT_TIMEOUT))
+        .build();
+    config.into()
+}
+
+fn submit_feedback(
+    agent: &ureq::Agent,
+    paths: &Paths,
+    input: FeedbackInput,
+) -> Result<FeedbackStatus, ClientError> {
     if !input.confirmed {
         return Err(ClientError::new(
             "feedbackConfirmation",
@@ -703,13 +920,19 @@ fn submit_feedback(paths: &Paths, input: FeedbackInput) -> Result<FeedbackStatus
             "feedback requires what happened and the expected result",
         ));
     }
-    if !input.screenshot.is_empty()
-        && !(input.screenshot.starts_with("data:image/jpeg;base64,")
-            || input.screenshot.starts_with("data:image/png;base64,"))
-    {
+    let screenshot_is_supported = input.screenshot.is_empty()
+        || input.screenshot.starts_with("data:image/jpeg;base64,")
+        || input.screenshot.starts_with("data:image/png;base64,");
+    if !screenshot_is_supported {
         return Err(ClientError::new(
             "feedbackScreenshot",
             "screenshot must be a JPEG or PNG data URL",
+        ));
+    }
+    if input.screenshot.len() > MAX_FEEDBACK_SCREENSHOT_BYTES {
+        return Err(ClientError::new(
+            "feedbackScreenshot",
+            "screenshot exceeds the feedback upload limit",
         ));
     }
     let report = format!(
@@ -736,7 +959,8 @@ fn submit_feedback(paths: &Paths, input: FeedbackInput) -> Result<FeedbackStatus
         message: report,
         screenshot: input.screenshot,
     };
-    let mut response = ureq::post(FEEDBACK_ENDPOINT)
+    let mut response = agent
+        .post(FEEDBACK_ENDPOINT)
         .header(
             "User-Agent",
             &format!("ChatCommonsDesktop/{PRODUCT_VERSION}"),
@@ -750,6 +974,8 @@ fn submit_feedback(paths: &Paths, input: FeedbackInput) -> Result<FeedbackStatus
         })?;
     let created: FeedbackCreated = response
         .body_mut()
+        .with_config()
+        .limit(FEEDBACK_RESPONSE_LIMIT)
         .read_json()
         .map_err(|error| ClientError::new("feedbackReceipt", error.to_string()))?;
     let receipt = StoredFeedbackReceipt {
@@ -766,12 +992,16 @@ fn submit_feedback(paths: &Paths, input: FeedbackInput) -> Result<FeedbackStatus
     })
 }
 
-fn refresh_feedback_status(paths: &Paths) -> Result<Option<FeedbackStatus>, ClientError> {
+fn refresh_feedback_status(
+    agent: &ureq::Agent,
+    paths: &Paths,
+) -> Result<Option<FeedbackStatus>, ClientError> {
     let Some(mut receipt) = load_feedback_receipt(&paths.feedback)? else {
         return Ok(None);
     };
     let endpoint = format!("{FEEDBACK_ENDPOINT}/{}", receipt.public_id);
-    let mut response = ureq::get(&endpoint)
+    let mut response = agent
+        .get(&endpoint)
         .header("X-Edit-Token", &receipt.edit_token)
         .header(
             "User-Agent",
@@ -786,6 +1016,8 @@ fn refresh_feedback_status(paths: &Paths) -> Result<Option<FeedbackStatus>, Clie
         })?;
     let status: FeedbackResponse = response
         .body_mut()
+        .with_config()
+        .limit(FEEDBACK_RESPONSE_LIMIT)
         .read_json()
         .map_err(|error| ClientError::new("feedbackStatus", error.to_string()))?;
     if status.public_id != receipt.public_id {
@@ -808,12 +1040,7 @@ fn load_feedback_receipt(path: &Path) -> Result<Option<StoredFeedbackReceipt>, C
     if !path.is_file() {
         return Ok(None);
     }
-    let bytes = fs::read(path).map_err(|error| {
-        ClientError::new(
-            "feedbackReceipt",
-            redact_diagnostic(&format!("could not read feedback receipt: {error}")),
-        )
-    })?;
+    let bytes = read_bounded_file(path, MAX_LOCAL_METADATA_BYTES, "feedbackReceipt")?;
     serde_json::from_slice(&bytes)
         .map(Some)
         .map_err(|error| ClientError::new("feedbackReceipt", error.to_string()))
@@ -833,23 +1060,83 @@ fn save_feedback_receipt(path: &Path, receipt: &StoredFeedbackReceipt) -> Result
     })?;
     let bytes = serde_json::to_vec(receipt)
         .map_err(|error| ClientError::new("feedbackReceipt", error.to_string()))?;
-    fs::write(path, bytes).map_err(|error| {
+    atomic_write(path, &bytes, "feedbackReceipt")?;
+    Ok(())
+}
+
+fn atomic_write(path: &Path, bytes: &[u8], error_code: &'static str) -> Result<(), ClientError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| ClientError::new(error_code, "destination directory is invalid"))?;
+    let mut temporary = NamedTempFile::new_in(parent).map_err(|error| {
         ClientError::new(
-            "feedbackReceipt",
-            redact_diagnostic(&format!("could not save feedback receipt: {error}")),
+            error_code,
+            redact_diagnostic(&format!("could not create temporary file: {error}")),
         )
     })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| {
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| {
+                ClientError::new(
+                    error_code,
+                    redact_diagnostic(&format!("could not protect temporary file: {error}")),
+                )
+            })?;
+    }
+    temporary.write_all(bytes).map_err(|error| {
+        ClientError::new(
+            error_code,
+            redact_diagnostic(&format!("could not write temporary file: {error}")),
+        )
+    })?;
+    temporary.as_file().sync_all().map_err(|error| {
+        ClientError::new(
+            error_code,
+            redact_diagnostic(&format!("could not synchronize temporary file: {error}")),
+        )
+    })?;
+    temporary.persist(path).map_err(|error| {
+        ClientError::new(
+            error_code,
+            redact_diagnostic(&format!("could not replace destination file: {error}")),
+        )
+    })?;
+    #[cfg(unix)]
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| {
             ClientError::new(
-                "feedbackReceipt",
-                redact_diagnostic(&format!("could not protect feedback receipt: {error}")),
+                error_code,
+                redact_diagnostic(&format!(
+                    "could not synchronize destination directory: {error}"
+                )),
             )
         })?;
-    }
     Ok(())
+}
+
+fn read_bounded_file(
+    path: &Path,
+    max_bytes: usize,
+    error_code: &'static str,
+) -> Result<Vec<u8>, ClientError> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|error| ClientError::new(error_code, redact_diagnostic(&error.to_string())))?
+        .take((max_bytes + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ClientError::new(error_code, redact_diagnostic(&error.to_string())))?;
+    if bytes.len() > max_bytes {
+        return Err(ClientError::new(
+            error_code,
+            format!("local metadata exceeds {max_bytes} bytes"),
+        ));
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -888,11 +1175,156 @@ mod tests {
         let temporary = tempfile::tempdir()?;
         let path = temporary.path().join("client.json");
         save_config(&path, Some("ab".repeat(32))).map_err(|error| error.detail)?;
+        save_config(&path, Some("cd".repeat(32))).map_err(|error| error.detail)?;
         let loaded = load_config(&path).map_err(|error| error.detail)?;
         assert_eq!(
             loaded.community_id.as_deref(),
-            Some("ab".repeat(32).as_str())
+            Some("cd".repeat(32).as_str())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_local_metadata_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let path = temporary.path().join("oversized.json");
+        fs::write(&path, vec![0; MAX_LOCAL_METADATA_BYTES + 1])?;
+
+        let error = load_config(&path).expect_err("oversized metadata must be rejected");
+
+        assert_eq!(error.code, "configRead");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_limits_message_listing_not_community_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir()?;
+        let state = temporary.path().join("state");
+        fs::create_dir_all(&state)?;
+        fs::write(state.join("identity.json"), b"test identity marker")?;
+        let config = temporary.path().join("client.json");
+        let community_id = "ab".repeat(32);
+        let channel_id = "cd".repeat(32);
+        save_config(&config, Some(community_id.clone())).map_err(|error| error.detail)?;
+        let executable = temporary.path().join("fake-node");
+        fs::write(
+            &executable,
+            format!(
+                r#"#!/bin/sh
+case "$1" in
+  info)
+    printf 'USER_ID={user_id}\n'
+    ;;
+  community-info)
+    if [ "$6" = "--limit" ]; then exit 9; fi
+    printf '{{"communityId":"{community_id}","name":"Test"}}\n'
+    ;;
+  list-channels)
+    printf '[{{"channelId":"{channel_id}","name":"general"}}]\n'
+    ;;
+  list-messages)
+    if [ "$6" != "--limit" ] || [ "$7" != "{CLIENT_MESSAGE_LIMIT}" ]; then exit 10; fi
+    printf '[]\n'
+    ;;
+  *)
+    exit 11
+    ;;
+esac
+"#,
+                user_id = "ef".repeat(32),
+            ),
+        )?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        let paths = Paths {
+            state,
+            config,
+            feedback: temporary.path().join("feedback.json"),
+            node: executable,
+        };
+
+        let snapshot =
+            load_snapshot(&paths, SnapshotConnection::Local).map_err(|error| error.detail)?;
+
+        assert_eq!(snapshot.communities.len(), 1);
+        assert_eq!(snapshot.communities[0].rooms.len(), 1);
+        assert_eq!(
+            snapshot
+                .messages_by_room
+                .get(&room_key(&community_id, &channel_id))
+                .map(Vec::len),
+            Some(0)
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sensitive_node_input_uses_stdin_instead_of_arguments()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir()?;
+        let arguments_path = temporary.path().join("arguments");
+        let stdin_path = temporary.path().join("stdin");
+        let executable = temporary.path().join("fake-node");
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$*\" > '{}'\ncat > '{}'\nprintf 'MESSAGE_EVENT_ID=test\\n'\n",
+                arguments_path.display(),
+                stdin_path.display(),
+            ),
+        )?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        let paths = Paths {
+            state: temporary.path().join("state"),
+            config: temporary.path().join("client.json"),
+            feedback: temporary.path().join("feedback.json"),
+            node: executable,
+        };
+        let secret = b"message that must not enter argv";
+
+        let output = run_node_with_input(
+            &paths,
+            &["send-message", "--stdin-field", "text"],
+            secret,
+            Duration::from_secs(1),
+        )
+        .map_err(|error| error.detail)?;
+
+        assert_eq!(
+            output_field(&output, "MESSAGE_EVENT_ID").map_err(|error| error.detail)?,
+            "test"
+        );
+        assert!(!fs::read_to_string(arguments_path)?.contains("message that must not enter argv"));
+        assert_eq!(fs::read(stdin_path)?, secret);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timed_node_process_is_terminated() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir()?;
+        let executable = temporary.path().join("slow-node");
+        fs::write(&executable, "#!/bin/sh\nexec sleep 5\n")?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        let paths = Paths {
+            state: temporary.path().join("state"),
+            config: temporary.path().join("client.json"),
+            feedback: temporary.path().join("feedback.json"),
+            node: executable,
+        };
+
+        let error = run_node_with_timeout(&paths, &[], Duration::from_millis(30))
+            .expect_err("the child should exceed its deadline");
+
+        assert_eq!(error.code, "nodeTimeout");
         Ok(())
     }
 }

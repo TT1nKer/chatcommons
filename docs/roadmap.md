@@ -186,7 +186,8 @@ until their respective engineering gates are met.
 - native Chinese/English desktop shell for macOS and Windows
 - automatic test identity initialization in the platform application-data path
 - one-community invite, channel, signed-message and history workflow
-- bounded one-shot Home Server synchronization for interactive clients
+- bounded Home Server synchronization with a non-overlapping two-second
+  friends-alpha receive loop
 - Home Server bootstrap derived from its signed declaration
 - dynamic removal and addition of single-use bootstrap grants
 - macOS arm64 and Windows x64 artifact workflow

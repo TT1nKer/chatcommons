@@ -6,6 +6,30 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4] - 2026-07-27
+
+### Added
+
+- A single-source desktop interface shared with the reviewed web client design.
+- Automatic two-second Home Server synchronization after joining, with a
+  single-flight guard that prevents overlapping network operations.
+- Private in-app feedback with long-form reports, optional screenshots and
+  receipt-based owner replies.
+
+### Changed
+
+- Joining a community now opens its first text room immediately.
+- Message sending remains local-first and triggers a background synchronization
+  without blocking the composer.
+- Desktop runtime operations use bounded subprocess and feedback request
+  timeouts, while failed synchronization preserves the validated local history.
+
+### Fixed
+
+- Prevented Enter from sending while an input method is still composing text.
+- Preserved per-room drafts and room selection across delayed synchronization.
+- Added scrollable join and feedback dialogs for short desktop windows.
+
 ## [0.1.0-alpha.3] - 2026-07-23
 
 ### Changed
@@ -90,7 +114,8 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 - Voice, video, screen sharing, MLS, attachments, and production account
   recovery are not implemented.
 
-[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.3...HEAD
+[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.4...HEAD
+[0.1.0-alpha.4]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/TT1nKer/chatcommons/releases/tag/v0.1.0-alpha.1

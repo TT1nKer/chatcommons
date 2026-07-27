@@ -1,6 +1,6 @@
 # ChatCommons
 
-Current product version: `0.1.0-alpha.3` (friends-and-contributors alpha).
+Current product version: `0.1.0-alpha.4` (friends-and-contributors alpha).
 Product releases, wire protocol versions, storage schema versions, and server
 deployment revisions are versioned independently. See
 [docs/versioning.md](docs/versioning.md).
@@ -85,14 +85,15 @@ cargo run --bin chatcommons-node -- run \
 
 cargo run --bin chatcommons-node -- join \
   --state <node-b-directory> \
-  --invite-code <cc1-code>
+  --stdin-field invite-code <<<"$INVITE_CODE"
 ```
 
-The code contains a bearer secret and the diagnostic CLI exposes it in terminal
-and process arguments. Use development identities only. The command has no
-discovery or production relay configuration. Mutating and long-running commands
-hold an advisory per-state process lock; restrict the diagnostic listener to a
-test environment. See
+The code contains a bearer secret. Prefer bounded stdin as shown above; the
+explicit `--invite-code` form remains available for manual compatibility but
+can expose the capability through shell history and process inspection. Use
+development identities only. The command has no discovery or production relay
+configuration. Mutating and long-running commands hold an advisory per-state
+process lock; restrict the diagnostic listener to a test environment. See
 [ADR 0014](docs/adr/0014-m2c-diagnostic-node.md) and
 [ADR 0015](docs/adr/0015-secure-invitation-bootstrap.md).
 

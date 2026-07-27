@@ -22,6 +22,8 @@ describe('client localization', () => {
     expect(copyFor('en').connection('degraded')).toBe('Local mode');
     expect(copyFor('zh-CN').errorMessage('nodeUnavailable')).toContain('协议组件');
     expect(copyFor('en').errorMessage('nodeUnavailable')).toContain('protocol component');
+    expect(copyFor('zh-CN').errorMessage('nodeTimeout')).toContain('响应超时');
+    expect(copyFor('en').errorMessage('nodeTimeout')).toContain('took too long');
     expect(copyFor('zh-CN').feedbackTitle).toBe('反馈与问题');
     expect(copyFor('en').feedbackTitle).toBe('Feedback & issues');
   });

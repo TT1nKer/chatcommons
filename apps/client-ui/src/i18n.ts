@@ -3,6 +3,7 @@ import type { ConnectionStatus, Locale } from './domain';
 const zhErrors: Record<string, string> = {
   inviteEmpty: '请先粘贴朋友发来的邀请。',
   nodeUnavailable: '协议组件没有随客户端正确安装，请重新下载完整客户端。',
+  nodeTimeout: '社区服务器响应超时。你的本地数据没有丢失，请检查网络后重试。',
   protocolOperation: '协议拒绝了这次操作。邀请码可能无效、已使用，或者社区服务器暂时不可达。',
   communityMissing: '这台设备还没有加入社区。',
   communityMismatch: '本地社区状态与当前操作不一致，请重新同步。',
@@ -17,6 +18,7 @@ const zhErrors: Record<string, string> = {
 const enErrors: Record<string, string> = {
   inviteEmpty: 'Paste the invite your friend sent you first.',
   nodeUnavailable: 'The protocol component was not installed beside the app. Download the complete client again.',
+  nodeTimeout: 'The Community Home Server took too long to respond. Your local data is safe; check the network and try again.',
   protocolOperation: 'The protocol rejected this operation. The invite may be invalid, already used, or the Community Home Server may be unavailable.',
   communityMissing: 'This device has not joined a community yet.',
   communityMismatch: 'The local community state does not match this operation. Synchronize and try again.',

@@ -8,7 +8,7 @@ use chatcommons_storage::EventStore;
 use chatcommons_sync::bootstrap::create_code;
 use libp2p::{Multiaddr, PeerId};
 use std::{
-    io::{self, BufRead, BufReader, Read},
+    io::{self, BufRead, BufReader, Read, Write},
     net::UdpSocket,
     process::{Child, Command, Output, Stdio},
     str::FromStr,
@@ -188,12 +188,20 @@ fn invite_code_bootstraps_a_new_member_over_quic() -> Result<(), Box<dyn std::er
             "join",
             "--state",
             &target_text,
-            "--invite-code",
-            &invite_code,
+            "--stdin-field",
+            "invite-code",
+            "--overall-timeout-ms",
+            "15000",
         ])
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    target
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::other("target stdin was not captured"))?
+        .write_all(invite_code.as_bytes())?;
     let deadline = Instant::now() + Duration::from_secs(15);
     let status = loop {
         if let Some(status) = target.try_wait()? {
@@ -223,6 +231,15 @@ fn invite_code_bootstraps_a_new_member_over_quic() -> Result<(), Box<dyn std::er
         return Err(format!("join failed: {target_stderr}\n{target_stdout}").into());
     }
     assert!(target_stdout.contains("JOIN_COMPLETE="));
+    let local_retry = run_command(&[
+        "join",
+        "--state",
+        &target_text,
+        "--invite-code",
+        &invite_code,
+    ])?;
+    require_success(&local_retry)?;
+    assert!(String::from_utf8_lossy(&local_retry.stdout).contains("JOIN_COMPLETE=local"));
 
     let replay_path = temporary.path().join("replay");
     let replay_text = replay_path.to_string_lossy().into_owned();

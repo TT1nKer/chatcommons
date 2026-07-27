@@ -14,13 +14,24 @@ synchronize with each community's declared Home Server.
 Message sending is local-first: a signed message is persisted and displayed
 before the client attempts its bounded Home Server synchronization. A temporarily
 unreachable server therefore reports degraded synchronization without blocking
-the local conversation.
+the local conversation. Initial rendering also reads the validated local
+snapshot before starting a bounded background synchronization.
+After joining, the app waits two seconds after each bounded synchronization
+finishes and then synchronizes again. This friends-alpha receive loop is polling,
+not a push channel; it avoids overlapping Home Server processes or accumulating
+requests while the server is unavailable.
+The current single-community alpha projects at most the latest 500 accepted
+messages into one UI snapshot; older events remain in SQLite and are not
+deleted.
 
 The desktop executable and `chatcommons-node` must be installed beside each
 other. `CHATCOMMONS_NODE_PATH` may override the sidecar location for local
 development. The webview does not parse or trust remote messages itself. Tauri
-commands serialize operations, call the sidecar, and return only the accepted
-projected state after the sidecar has persisted and validated the protocol DAG.
+commands serialize protocol-state operations, call the sidecar, and return only
+the accepted projected state after the sidecar has persisted and validated the
+protocol DAG. Invitation capabilities and message bodies travel through bounded
+stdin rather than process arguments. Feedback HTTP requests use their own
+bounded worker and cannot hold the protocol-state operation lock.
 
 This alpha has no account recovery, multi-device identity, automatic updates,
 attachments, voice, notifications, or production key-management guarantee.
@@ -36,10 +47,10 @@ submission controls.
 
 The app generates a diagnostic preview before submission. It excludes chat
 messages, invitations, identity keys, full identity/community identifiers and
-local paths. A tester may separately capture the current app window; the dialog
-is hidden during capture and the screenshot is attached only after explicit
-confirmation. The server still enforces operational safety bounds: a 2 MB
-request cap, a 1 MB decoded screenshot cap and per-address rate limiting.
+local paths. A tester may explicitly choose a PNG or JPEG screenshot and review
+its filename before confirming submission. The server still enforces
+operational safety bounds: a 2 MB request cap, a 1 MB decoded screenshot cap
+and per-address rate limiting.
 
 The returned private edit capability is stored in the user's application data
 directory so the app can later retrieve the owner status and reply. It must not

@@ -1,7 +1,10 @@
 #![cfg(unix)]
 
 use serde_json::Value;
-use std::process::{Command, Output};
+use std::{
+    io::Write,
+    process::{Command, Output, Stdio},
+};
 
 fn run(arguments: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
     Ok(Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
@@ -11,6 +14,33 @@ fn run(arguments: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
 
 fn success(arguments: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
     let output = run(arguments)?;
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(format!(
+            "command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into())
+    }
+}
+
+fn success_with_stdin(
+    arguments: &[&str],
+    input: &[u8],
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .ok_or("command stdin is unavailable")?
+        .write_all(input)?;
+    let output = child.wait_with_output()?;
     if output.status.success() {
         Ok(output)
     } else {
@@ -55,6 +85,20 @@ fn signed_channel_and_message_commands_persist_and_filter() -> Result<(), Box<dy
         "general",
     ])?;
     let channel = field(&channel, "CHANNEL_ID")?;
+    success_with_stdin(
+        &[
+            "send-message",
+            "--state",
+            &owner,
+            "--community",
+            &community,
+            "--channel",
+            &channel,
+            "--stdin-field",
+            "text",
+        ],
+        b"hello from a signed event",
+    )?;
     success(&[
         "send-message",
         "--state",
@@ -64,8 +108,12 @@ fn signed_channel_and_message_commands_persist_and_filter() -> Result<(), Box<dy
         "--channel",
         &channel,
         "--text",
-        "hello from a signed event",
+        "latest signed event",
     ])?;
+
+    let joined = success(&["list-joined-communities", "--state", &owner])?;
+    let joined: Value = serde_json::from_slice(&joined.stdout)?;
+    assert_eq!(joined[0], community);
 
     let channels = success(&[
         "list-channels",
@@ -78,7 +126,7 @@ fn signed_channel_and_message_commands_persist_and_filter() -> Result<(), Box<dy
     assert_eq!(channels[0]["channelId"], channel);
     assert_eq!(channels[0]["name"], "general");
 
-    let messages = success(&[
+    let all_messages = success(&[
         "list-messages",
         "--state",
         &owner,
@@ -87,10 +135,23 @@ fn signed_channel_and_message_commands_persist_and_filter() -> Result<(), Box<dy
         "--channel",
         &channel,
     ])?;
+    let all_messages: Value = serde_json::from_slice(&all_messages.stdout)?;
+    assert_eq!(all_messages.as_array().map(Vec::len), Some(2));
+    assert_eq!(all_messages[0]["text"], "hello from a signed event");
+
+    let messages = success(&[
+        "list-messages",
+        "--state",
+        &owner,
+        "--community",
+        &community,
+        "--limit",
+        "1",
+    ])?;
     let messages: Value = serde_json::from_slice(&messages.stdout)?;
     assert_eq!(messages.as_array().map(Vec::len), Some(1));
     assert_eq!(messages[0]["channelId"], channel);
-    assert_eq!(messages[0]["text"], "hello from a signed event");
+    assert_eq!(messages[0]["text"], "latest signed event");
     assert_eq!(messages[0]["authorId"].as_str().map(str::len), Some(64));
     assert_eq!(messages[0]["eventId"].as_str().map(str::len), Some(64));
     Ok(())

@@ -77,6 +77,10 @@ export class ClientBridgeError extends Error {
   }
 }
 
+export function clientFailureCode(reason: unknown): string {
+  return reason instanceof ClientBridgeError ? reason.code : 'unknown';
+}
+
 export interface ClientAdapter {
   readonly kind: 'review' | 'tauri';
   load(): Promise<ClientSnapshot>;

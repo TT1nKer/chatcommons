@@ -8,12 +8,12 @@ use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 #[tauri::command]
 async fn client_snapshot(state: State<'_, RuntimeState>) -> Result<ClientSnapshot, ClientError> {
-    state.snapshot(true).await
+    state.local_snapshot().await
 }
 
 #[tauri::command]
 async fn sync_client(state: State<'_, RuntimeState>) -> Result<ClientSnapshot, ClientError> {
-    state.snapshot(true).await
+    state.synchronized_snapshot().await
 }
 
 #[tauri::command]
