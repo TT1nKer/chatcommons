@@ -1,3 +1,5 @@
+mod voice;
+
 use chatcommons_cli::NodeState;
 use chatcommons_crypto::UserId;
 use chatcommons_node_core::{CoreNode, MAX_PENDING_EVENTS, NodeError};
@@ -16,6 +18,7 @@ use chatcommons_sync::{
     bootstrap::{BootstrapError, create_code, parse_code},
     network::{
         BootstrapGrant, MAX_BOOTSTRAP_ANCESTRY_EVENTS, NetworkError, NetworkEvent, NetworkNode,
+        RejectionCode,
     },
 };
 use libp2p::{Multiaddr, PeerId, identity};
@@ -32,6 +35,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
+use voice::VoiceTokenIssuer;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -71,6 +75,8 @@ Usage:
     --listen <multiaddr> [--relay-address <relay-base-multiaddr>]
     [--exit-after-events <count>] [--idle-timeout-ms <milliseconds>]
     [--overall-timeout-ms <milliseconds>]
+  chatcommons-node voice-token --state <directory> --community <hex>
+    --channel <hex> [--overall-timeout-ms <milliseconds>]
 
 This is a developer tool. Relay-assisted hole punching requires an explicit relay.
 It has no discovery, production relay configuration, or GUI.
@@ -116,6 +122,8 @@ enum CliError {
     Sync(#[from] SyncError),
     #[error("network failed: {0}")]
     Network(#[from] NetworkError),
+    #[error("voice service failed: {0}")]
+    Voice(#[from] voice::VoiceIssuerError),
     #[error("database already contains another or unknown community")]
     WrongDatabaseCommunity,
     #[error("database already contains a community")]
@@ -239,6 +247,7 @@ async fn run() -> Result<(), CliError> {
         "sync-home-server" => {
             command_network(&options, NetworkRole::Peer, DialMode::HomeServer).await
         }
+        "voice-token" => command_voice_token(&options).await,
         _ => Err(CliError::Arguments(format!("unknown command {command}"))),
     }
 }
@@ -952,8 +961,98 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
             NetworkEvent::BootstrapAcceptance { .. } => {
                 return Err(CliError::ProfileRejected);
             }
+            NetworkEvent::VoiceTokenRequest { .. } | NetworkEvent::VoiceToken { .. } => {
+                return Err(CliError::ProfileRejected);
+            }
         }
         io::stdout().flush()?;
+    }
+}
+
+async fn command_voice_token(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&[
+        "--state",
+        "--community",
+        "--channel",
+        "--overall-timeout-ms",
+    ])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let channel_id = parse_hex_32(options.require_one("--channel")?)?;
+    let overall_timeout = options
+        .optional_one("--overall-timeout-ms")?
+        .map(parse_positive_milliseconds)
+        .transpose()?
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_secs(10));
+    let core = CoreNode::open(EventStore::open(state.database_path())?, Some(community))?;
+    let profile = resolve(&core.all_events()?)?;
+    if !profile.snapshot.members.contains(&state.user().user_id())
+        || !profile.snapshot.channels.contains(&channel_id)
+    {
+        return Err(CliError::ProfileRejected);
+    }
+    let home_server = profile
+        .snapshot
+        .home_server
+        .clone()
+        .ok_or(CliError::MissingHomeServer)?;
+    let (peer, address) = home_server_target(&home_server)?;
+    let certificate =
+        create_device_certificate(state.user(), state.device(), state.created_at_ms());
+    let mut network = NetworkNode::new(
+        state.device(),
+        certificate,
+        SyncPeer::new(core, community)?,
+        profile.snapshot.members,
+        RevocationSet::default(),
+    )?;
+    network.replace_authorization(
+        BTreeSet::from([state.user().user_id()]),
+        BTreeSet::from([DeviceId::from_public_key(&home_server.server_public_key)]),
+    );
+    network.listen(parse_multiaddr("/ip4/0.0.0.0/udp/0/quic-v1")?)?;
+    network.dial(peer, address)?;
+
+    let deadline = tokio::time::Instant::now() + overall_timeout;
+    let mut requested = false;
+    loop {
+        let event = tokio::time::timeout_at(deadline, network.next_event())
+            .await
+            .map_err(|_| CliError::OperationTimedOut)??;
+        match event {
+            NetworkEvent::VoiceToken {
+                peer: response_peer,
+                grant,
+            } if response_peer == peer => {
+                serde_json::to_writer(io::stdout().lock(), &grant)?;
+                println!();
+                io::stdout().flush()?;
+                return Ok(());
+            }
+            NetworkEvent::VoiceTokenRequest {
+                peer: request_peer, ..
+            } => {
+                network.resolve_voice_token(request_peer, Err(RejectionCode::VoiceUnavailable))?;
+            }
+            NetworkEvent::Disconnected(disconnected) if disconnected == peer => {
+                return Err(CliError::Network(NetworkError::Request(
+                    "Home Server disconnected before issuing a voice token".into(),
+                )));
+            }
+            NetworkEvent::RequestFailed {
+                peer: failed_peer,
+                reason,
+            } if failed_peer == peer => {
+                return Err(CliError::Network(NetworkError::Request(reason)));
+            }
+            _ => {}
+        }
+        if !requested && network.is_mutually_authenticated(peer) {
+            network.request_voice_token(peer, channel_id)?;
+            requested = true;
+        }
     }
 }
 
@@ -1045,6 +1144,11 @@ async fn command_network(
                 .transpose()?
                 .unwrap_or(DEFAULT_HOME_SERVER_STORE_BYTES),
         )
+    } else {
+        None
+    };
+    let voice_issuer = if role == NetworkRole::HomeServer {
+        VoiceTokenIssuer::from_environment()?
     } else {
         None
     };
@@ -1214,6 +1318,32 @@ async fn command_network(
             }
             NetworkEvent::BootstrapAccepted(peer) => {
                 println!("UNEXPECTED_BOOTSTRAP_ACCEPTED={peer}")
+            }
+            NetworkEvent::VoiceTokenRequest {
+                peer,
+                user_id,
+                device_id,
+                channel_id,
+            } => {
+                let profile = resolve(&network.sync_peer().node().all_events()?)?;
+                let authorized = profile.snapshot.members.contains(&user_id)
+                    && profile.snapshot.channels.contains(&channel_id);
+                let result = match (&voice_issuer, authorized) {
+                    (Some(issuer), true) => issuer
+                        .issue(community, channel_id, user_id, device_id, now_ms()?)
+                        .map_err(|error| {
+                            eprintln!("voice token issuance failed: {error}");
+                            RejectionCode::VoiceUnavailable
+                        }),
+                    (None, _) => Err(RejectionCode::VoiceUnavailable),
+                    (_, false) => Err(RejectionCode::VoiceRoomUnavailable),
+                };
+                let approved = result.is_ok();
+                network.resolve_voice_token(peer, result)?;
+                println!("VOICE_TOKEN_DECISION={peer} approved={approved}");
+            }
+            NetworkEvent::VoiceToken { peer, .. } => {
+                println!("UNEXPECTED_VOICE_TOKEN={peer}")
             }
             NetworkEvent::BootstrapAcceptance {
                 peer,

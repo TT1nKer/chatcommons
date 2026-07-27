@@ -79,6 +79,10 @@ community.ccarchive
 service.env
 ```
 
+Voice endpoint and LiveKit issuer credentials are intentionally excluded from
+`service.env`. A restored Home Server starts with voice disabled until the
+operator provisions a new media-service key and all three voice variables.
+
 The checksums detect accidental corruption; they are stored beside the data and
 do not authenticate a snapshot supplied by an attacker. Event signatures and
 archive validation still protect the community history, while identity parsing

@@ -27,6 +27,7 @@ import {
   sessionReducer,
   type RoomSelection,
 } from './session';
+import { useVoiceSession, type VoiceParticipant, type VoiceStatus } from './voice/useVoiceSession';
 
 const localeStorageKey = 'chatcommons-locale';
 const automaticSyncDelayMs = 2_000;
@@ -98,6 +99,7 @@ export function App({ adapter }: AppProps) {
   const toastTimer = useRef<number | undefined>(undefined);
   const syncInFlight = useRef(false);
   const copy = copyFor(locale);
+  const voice = useVoiceSession(adapter);
   const {
     snapshot,
     selection,
@@ -305,6 +307,15 @@ export function App({ adapter }: AppProps) {
     }
   }
 
+  function joinVoice() {
+    if (!community || !room) return;
+    void voice.join({
+      communityId: community.id,
+      roomId: room.id,
+      roomName: room.name,
+    });
+  }
+
   function composerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (shouldSubmitComposer({
       key: event.key,
@@ -401,6 +412,24 @@ export function App({ adapter }: AppProps) {
               <strong>{screen === 'community' && room ? `# ${room.name}` : copy.now}</strong>
             </div>
             <nav className="context-actions" aria-label={copy.globalActions}>
+              {screen === 'community' && community && room && (
+                <button
+                  className={`voice-join is-${voice.status}`}
+                  type="button"
+                  disabled={
+                    voice.status === 'connecting'
+                    || (voice.status === 'connected' && voice.roomKey === activeRoomKey)
+                  }
+                  onClick={joinVoice}
+                >
+                  <span aria-hidden="true">◖</span>
+                  {voice.status === 'connecting' && voice.roomKey === activeRoomKey
+                    ? copy.voiceConnecting
+                    : voice.status === 'connected' && voice.roomKey === activeRoomKey
+                      ? copy.voiceConnected
+                      : copy.joinVoice}
+                </button>
+              )}
               <span className={`connection-dot is-${snapshot.connection.status}`} title={copy.connection(snapshot.connection.status)}>
                 <i aria-hidden="true" />
                 <span>{copy.connection(snapshot.connection.status)}</span>
@@ -459,6 +488,7 @@ export function App({ adapter }: AppProps) {
                 onSubmit={submitMessage}
                 onComposerKeyDown={composerKeyDown}
                 onPendingAction={() => announce(copy.notConnectedYet)}
+                voice={voice}
               />
             ) : (
               <EmptyState
@@ -695,6 +725,16 @@ interface CommunityScreenProps {
   onSubmit: (event: FormEvent) => void;
   onComposerKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onPendingAction: () => void;
+  voice: {
+    status: VoiceStatus;
+    roomKey: string;
+    roomName: string;
+    muted: boolean;
+    participants: VoiceParticipant[];
+    errorCode: string;
+    leave: () => void;
+    toggleMute: () => Promise<void>;
+  };
 }
 
 function CommunityScreen({
@@ -708,6 +748,7 @@ function CommunityScreen({
   onSubmit,
   onComposerKeyDown,
   onPendingAction,
+  voice,
 }: CommunityScreenProps) {
   const messageListRef = useRef<HTMLDivElement>(null);
   const previousRoomKey = useRef('');
@@ -750,6 +791,9 @@ function CommunityScreen({
           </article>
         ))}
       </div>
+      {voice.status !== 'idle' && (
+        <VoiceDock copy={copy} voice={voice} />
+      )}
       <form className="composer" onSubmit={onSubmit}>
         <button type="button" className="composer-add" onClick={onPendingAction} aria-label={copy.addAttachment}>＋</button>
         <label>
@@ -767,6 +811,63 @@ function CommunityScreen({
           {sending ? copy.sending : copy.send}
         </button>
       </form>
+    </section>
+  );
+}
+
+function VoiceDock({
+  copy,
+  voice,
+}: {
+  copy: AppCopy;
+  voice: CommunityScreenProps['voice'];
+}) {
+  const statusLabel = {
+    idle: '',
+    connecting: copy.voiceConnecting,
+    connected: copy.voiceConnected,
+    reconnecting: copy.voiceReconnecting,
+    error: copy.voiceError,
+  }[voice.status];
+
+  return (
+    <section className={`voice-dock is-${voice.status}`} aria-label={copy.voiceRoom}>
+      <div className="voice-dock-copy">
+        <span className="voice-pulse" aria-hidden="true"><i /><i /><i /></span>
+        <span>
+          <strong>{voice.roomName || copy.voiceRoom}</strong>
+          <small>
+            {voice.status === 'error'
+              ? copy.errorMessage(voice.errorCode)
+              : `${statusLabel} · ${copy.voiceParticipants(voice.participants.length)}`}
+          </small>
+        </span>
+      </div>
+      <div className="voice-participants" aria-label={copy.voiceParticipants(voice.participants.length)}>
+        {voice.participants.slice(0, 10).map((participant) => (
+          <span
+            className={participant.speaking ? 'is-speaking' : ''}
+            key={participant.id}
+            title={`${participant.name}${participant.local ? ` · ${copy.you}` : ''}`}
+          >
+            {participant.symbol}
+          </span>
+        ))}
+      </div>
+      <div className="voice-controls">
+        {voice.status !== 'error' && (
+          <button
+            type="button"
+            disabled={voice.status !== 'connected'}
+            onClick={() => void voice.toggleMute()}
+          >
+            {voice.muted ? copy.unmute : copy.mute}
+          </button>
+        )}
+        <button className="voice-leave" type="button" onClick={voice.leave}>
+          {voice.status === 'error' ? copy.close : copy.leaveVoice}
+        </button>
+      </div>
     </section>
   );
 }

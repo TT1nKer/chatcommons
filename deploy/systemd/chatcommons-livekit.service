@@ -1,0 +1,34 @@
+[Unit]
+Description=ChatCommons friends-alpha voice SFU
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=livekit
+Group=livekit
+ExecStart=/opt/chatcommons/bin/livekit-server --config /etc/livekit/livekit.yaml
+Restart=always
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+# LiveKit reads NETLINK_ROUTE to discover the host's routable interfaces.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=65535
+TasksMax=256
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

@@ -49,6 +49,17 @@ export interface SendMessageInput {
   body: string;
 }
 
+export interface VoiceTokenInput {
+  communityId: string;
+  roomId: string;
+}
+
+export interface VoiceGrant {
+  serverUrl: string;
+  participantToken: string;
+  expiresAtMs: number;
+}
+
 export interface FeedbackInput {
   whatHappened: string;
   expected: string;
@@ -87,6 +98,7 @@ export interface ClientAdapter {
   sync(): Promise<ClientSnapshot>;
   joinCommunity(inviteCode: string): Promise<ClientSnapshot>;
   sendMessage(input: SendMessageInput): Promise<Message>;
+  voiceToken(input: VoiceTokenInput): Promise<VoiceGrant>;
   submitFeedback(input: FeedbackInput): Promise<FeedbackStatus>;
   feedbackStatus(): Promise<FeedbackStatus | null>;
 }

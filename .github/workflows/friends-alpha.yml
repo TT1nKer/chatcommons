@@ -68,6 +68,8 @@ jobs:
           cp target/release/chatcommons-desktop "$app/Contents/MacOS/"
           cp target/release/chatcommons-node "$app/Contents/MacOS/"
           cp apps/desktop/packaging/Info.plist "$app/Contents/"
+          cp -R apps/desktop/packaging/en.lproj "$app/Contents/Resources/"
+          cp -R apps/desktop/packaging/zh-Hans.lproj "$app/Contents/Resources/"
           cp README.md "$app/Contents/Resources/README.md"
           cp apps/desktop/README.md "$app/Contents/Resources/DESKTOP.md"
           cp LICENSE VERSION "$app/Contents/Resources/"

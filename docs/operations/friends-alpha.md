@@ -46,3 +46,27 @@ chatcommons-node sync-home-server \
 Success prints `AUTHENTICATED`, one or more sync progress lines and
 `SYNC_COMPLETE`. A handshake timeout while the service and UFW are healthy
 indicates the cloud security group is still blocking UDP 4001.
+
+## Voice
+
+The invited alpha uses a separate LiveKit process for audio media. The Home
+Server only validates membership and issues five-minute room grants; it does
+not forward microphone traffic. The deployed limits are:
+
+- 10 participants per room;
+- TCP 7881 as WebRTC fallback;
+- UDP 50000–50020 for WebRTC media;
+- HTTPS/WSS signaling through `voice.ttinker.net` and nginx;
+- no video, recording or media E2EE.
+
+The cloud security group and UFW must allow TCP 7881 and UDP 50000–50020.
+TCP 7880 remains host-local behind nginx. The voice API key and secret exist in
+both `/etc/livekit/livekit.yaml` and the root-only Home Server environment.
+They must never be copied to clients, logs, archives or this repository.
+The snapshot script removes all three voice variables; after a restore, issue a
+new media-service key before re-enabling voice.
+
+If voice must be disabled without affecting text, stop
+`chatcommons-livekit.service`, remove the three voice issuer variables from the
+Home Server environment and restart the Home Server. Existing text state is
+unchanged.

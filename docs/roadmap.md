@@ -196,6 +196,17 @@ until their respective engineering gates are met.
 
 See [`ADR 0022`](adr/0022-friends-alpha-desktop-and-server-bootstrap.md).
 
+## M4a.1 — authorized friends-alpha voice (implemented locally)
+
+- room voice for at most ten invited community members
+- short-lived microphone-only grants issued by the Community Home Server after
+  current membership and channel validation
+- one replaceable self-hosted LiveKit SFU; media bypasses the Home Server
+- desktop join, reconnecting, participant, mute and leave states
+- no video, recording, broadcast, browser-review voice or media E2EE
+
+See [`ADR 0025`](adr/0025-authorized-community-voice.md).
+
 ## M4b — one reviewed client UI (first desktop slice implemented)
 
 - one React/TypeScript product interface under `apps/client-ui`

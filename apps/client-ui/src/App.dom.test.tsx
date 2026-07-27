@@ -11,12 +11,62 @@ import {
   it,
   vi,
 } from 'vitest';
+
+const voiceSdk = vi.hoisted(() => ({
+  connect: vi.fn().mockResolvedValue(undefined),
+  disconnect: vi.fn().mockResolvedValue(undefined),
+  startAudio: vi.fn().mockResolvedValue(undefined),
+  setMicrophoneEnabled: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('livekit-client', () => {
+  class TestRoom {
+    activeSpeakers: unknown[] = [];
+    remoteParticipants = new Map();
+    localParticipant = {
+      identity: 'local-user:local-device',
+      name: 'Tester',
+      setMicrophoneEnabled: voiceSdk.setMicrophoneEnabled,
+    };
+
+    on() {
+      return this;
+    }
+
+    removeAllListeners() {}
+
+    connect = voiceSdk.connect;
+
+    disconnect = voiceSdk.disconnect;
+
+    startAudio = voiceSdk.startAudio;
+  }
+
+  return {
+    Room: TestRoom,
+    RoomEvent: {
+      ParticipantConnected: 'participantConnected',
+      ParticipantDisconnected: 'participantDisconnected',
+      ParticipantNameChanged: 'participantNameChanged',
+      ActiveSpeakersChanged: 'activeSpeakersChanged',
+      Reconnecting: 'reconnecting',
+      Reconnected: 'reconnected',
+      Disconnected: 'disconnected',
+      TrackSubscribed: 'trackSubscribed',
+      TrackUnsubscribed: 'trackUnsubscribed',
+      MediaDevicesError: 'mediaDevicesError',
+    },
+    Track: { Kind: { Audio: 'audio' } },
+  };
+});
+
 import { App } from './App';
-import type {
-  ClientAdapter,
-  ClientSnapshot,
-  FeedbackInput,
-  Message,
+import {
+  ClientBridgeError,
+  type ClientAdapter,
+  type ClientSnapshot,
+  type FeedbackInput,
+  type Message,
 } from './domain';
 
 interface Deferred<T> {
@@ -93,6 +143,9 @@ function createAdapter(
     sync: vi.fn().mockResolvedValue(snapshot),
     joinCommunity: vi.fn().mockResolvedValue(snapshot),
     sendMessage: vi.fn(async ({ body }) => sentMessage(body)),
+    voiceToken: vi.fn().mockRejectedValue(
+      new ClientBridgeError('voiceDesktopOnly', 'voice requires the desktop client'),
+    ),
     submitFeedback: vi.fn().mockResolvedValue({
       publicId: 'feedback-1',
       status: 'received',
@@ -161,6 +214,7 @@ describe('App behavior', () => {
   let root: Root;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     const storage = memoryStorage();
     Object.defineProperty(globalThis, 'localStorage', {
@@ -400,6 +454,37 @@ describe('App behavior', () => {
     expect(submitted[0].whatHappened).toBe(whatHappened);
     expect(submitted[0].expected).toBe(expected);
     expect(submitted[0].screen).toBe('home');
+  });
+
+  it('opens the microphone only after receiving a valid voice grant', async () => {
+    const voiceToken = vi.fn().mockResolvedValue({
+      serverUrl: 'wss://voice.example.test',
+      participantToken: 'signed-participant-token',
+      expiresAtMs: Date.now() + 60_000,
+    });
+    await render(createAdapter({ kind: 'tauri', voiceToken }));
+
+    click(roomButton(container, 'Room A'));
+    click(container.querySelector('.voice-join'));
+    await settle();
+    await settle();
+
+    expect(voiceToken).toHaveBeenCalledWith({
+      communityId: 'community-a',
+      roomId: 'room-a',
+    });
+    expect(voiceSdk.connect).toHaveBeenCalledWith(
+      'wss://voice.example.test',
+      'signed-participant-token',
+      { autoSubscribe: true },
+    );
+    expect(voiceSdk.setMicrophoneEnabled).toHaveBeenCalledWith(true);
+    expect(container.querySelector('.voice-dock')?.textContent)
+      .toContain('Voice connected');
+
+    click(container.querySelector('.voice-leave'));
+    expect(voiceSdk.disconnect).toHaveBeenCalled();
+    expect(container.querySelector('.voice-dock')).toBeNull();
   });
 
   it('does not let an older status request hide a new feedback receipt', async () => {

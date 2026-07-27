@@ -480,6 +480,36 @@ label:has(input:focus-visible) {
   gap: 7px;
 }
 
+.voice-join {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid #3a3c46;
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.voice-join:hover:not(:disabled),
+.voice-join.is-connected {
+  border-color: rgb(132 184 154 / .55);
+  color: #a6d2b6;
+}
+
+.voice-join:disabled {
+  cursor: default;
+  opacity: .8;
+}
+
+.voice-join > span {
+  color: #84b89a;
+  font-size: 13px;
+}
+
 .connection-dot {
   display: flex;
   align-items: center;
@@ -839,6 +869,145 @@ label:has(input:focus-visible) {
   margin-top: 7px;
   color: var(--faint);
   font-size: 10px;
+}
+
+.voice-dock {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  margin: 0 clamp(18px, 4vw, 48px) 9px;
+  padding: 9px 10px 9px 13px;
+  border: 1px solid rgb(132 184 154 / .24);
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgb(132 184 154 / .09), var(--panel-raised) 32%);
+}
+
+.voice-dock.is-error {
+  border-color: rgb(233 132 112 / .32);
+  background: linear-gradient(90deg, rgb(233 132 112 / .09), var(--panel-raised) 32%);
+}
+
+.voice-dock-copy {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.voice-dock-copy > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.voice-dock-copy strong,
+.voice-dock-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-dock-copy strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.voice-dock-copy small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.voice-pulse {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1px solid rgb(132 184 154 / .28);
+  border-radius: 7px;
+}
+
+.voice-pulse i {
+  width: 2px;
+  height: 7px;
+  border-radius: 2px;
+  background: #84b89a;
+}
+
+.voice-pulse i:nth-child(2) {
+  height: 13px;
+}
+
+.is-connecting .voice-pulse i,
+.is-reconnecting .voice-pulse i {
+  animation: voice-level .8s ease-in-out infinite alternate;
+}
+
+.is-connecting .voice-pulse i:nth-child(2),
+.is-reconnecting .voice-pulse i:nth-child(2) {
+  animation-delay: -.35s;
+}
+
+@keyframes voice-level {
+  to {
+    height: 4px;
+    opacity: .5;
+  }
+}
+
+.voice-participants {
+  display: flex;
+  align-items: center;
+  padding-left: 5px;
+}
+
+.voice-participants > span {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  margin-left: -5px;
+  border: 2px solid var(--panel-raised);
+  border-radius: 50%;
+  background: #393c45;
+  color: var(--ink);
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.voice-participants > span.is-speaking {
+  border-color: #84b89a;
+  box-shadow: 0 0 0 2px rgb(132 184 154 / .16);
+}
+
+.voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.voice-controls button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.voice-controls button:hover:not(:disabled) {
+  border-color: #4b4e58;
+  color: var(--ink);
+}
+
+.voice-controls .voice-leave {
+  border-color: rgb(233 132 112 / .25);
+  color: #e98470;
 }
 
 .composer {
@@ -1232,6 +1401,13 @@ label:has(input:focus-visible) {
     display: none;
   }
 
+  .voice-join {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
   .now-columns {
     grid-template-columns: 1fr;
   }
@@ -1341,6 +1517,34 @@ label:has(input:focus-visible) {
   .composer {
     margin-inline: 10px;
     margin-bottom: 10px;
+  }
+
+  .voice-dock {
+    grid-template-columns: minmax(0, 1fr) auto;
+    margin-inline: 10px;
+  }
+
+  .voice-participants {
+    display: none;
+  }
+
+  .voice-controls button {
+    width: 31px;
+    overflow: hidden;
+    padding: 0;
+    color: transparent;
+    font-size: 0;
+  }
+
+  .voice-controls button::before {
+    color: var(--muted);
+    font-size: 12px;
+    content: '◉';
+  }
+
+  .voice-controls .voice-leave::before {
+    color: #e98470;
+    content: '×';
   }
 
   .dialog-form > .feedback-footer {

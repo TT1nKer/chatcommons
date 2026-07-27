@@ -8,7 +8,7 @@ use std::{
     process::{Command, Output, Stdio},
     sync::{Arc, Mutex},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tempfile::NamedTempFile;
 
@@ -21,6 +21,10 @@ const SYNC_PROCESS_TIMEOUT: Duration = Duration::from_secs(7);
 const JOIN_OVERALL_TIMEOUT_MS: &str = "15000";
 const JOIN_PROCESS_TIMEOUT: Duration = Duration::from_secs(17);
 const MESSAGE_PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
+const VOICE_TOKEN_OVERALL_TIMEOUT_MS: &str = "8000";
+const VOICE_TOKEN_PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_VOICE_TOKEN_BYTES: usize = 16 * 1024;
+const MAX_VOICE_SERVER_URL_BYTES: usize = 2 * 1024;
 const FEEDBACK_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const FEEDBACK_CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
 const FEEDBACK_RESPONSE_LIMIT: u64 = 64 * 1024;
@@ -153,6 +157,44 @@ impl RuntimeState {
                 body: body.into(),
                 own: true,
             })
+        })
+        .await
+    }
+
+    pub async fn voice_token(&self, input: VoiceTokenInput) -> Result<VoiceGrant, ClientError> {
+        self.run_serialized(move |paths| {
+            let config = load_config(&paths.config)?;
+            let Some(configured_community) = config.community_id else {
+                return Err(ClientError::new(
+                    "communityMissing",
+                    "no community is configured",
+                ));
+            };
+            if configured_community != input.community_id {
+                return Err(ClientError::new(
+                    "communityMismatch",
+                    "the selected community is not configured locally",
+                ));
+            }
+            let output = run_node_with_timeout(
+                paths,
+                &[
+                    "voice-token",
+                    "--state",
+                    path_text(&paths.state)?,
+                    "--community",
+                    &input.community_id,
+                    "--channel",
+                    &input.room_id,
+                    "--overall-timeout-ms",
+                    VOICE_TOKEN_OVERALL_TIMEOUT_MS,
+                ],
+                VOICE_TOKEN_PROCESS_TIMEOUT,
+            )?;
+            let grant: VoiceGrant = serde_json::from_str(&output)
+                .map_err(|error| ClientError::new("voiceGrant", error.to_string()))?;
+            validate_voice_grant(&grant)?;
+            Ok(grant)
         })
         .await
     }
@@ -303,6 +345,24 @@ pub struct SendMessageInput {
     community_id: String,
     room_id: String,
     body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VoiceTokenInput {
+    community_id: String,
+    room_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VoiceGrant {
+    #[serde(alias = "server_url")]
+    pub server_url: String,
+    #[serde(alias = "participant_token")]
+    pub participant_token: String,
+    #[serde(alias = "expires_at_ms")]
+    pub expires_at_ms: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1064,6 +1124,27 @@ fn save_feedback_receipt(path: &Path, receipt: &StoredFeedbackReceipt) -> Result
     Ok(())
 }
 
+fn validate_voice_grant(grant: &VoiceGrant) -> Result<(), ClientError> {
+    let valid_url = grant.server_url.starts_with("wss://")
+        && grant.server_url.len() <= MAX_VOICE_SERVER_URL_BYTES
+        && !grant.server_url.chars().any(char::is_whitespace);
+    let valid_token = !grant.participant_token.is_empty()
+        && grant.participant_token.len() <= MAX_VOICE_TOKEN_BYTES
+        && !grant.participant_token.chars().any(char::is_whitespace);
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok());
+    let valid_expiry = now_ms.is_some_and(|now| grant.expires_at_ms > now + 5_000);
+    if !valid_url || !valid_token || !valid_expiry {
+        return Err(ClientError::new(
+            "voiceGrant",
+            "voice service returned an invalid grant",
+        ));
+    }
+    Ok(())
+}
+
 fn atomic_write(path: &Path, bytes: &[u8], error_code: &'static str) -> Result<(), ClientError> {
     let parent = path
         .parent()
@@ -1193,6 +1274,38 @@ mod tests {
         let error = load_config(&path).expect_err("oversized metadata must be rejected");
 
         assert_eq!(error.code, "configRead");
+        Ok(())
+    }
+
+    #[test]
+    fn voice_grants_accept_protocol_json_and_serialize_for_the_client()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let expires_at_ms =
+            i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? + 60_000;
+        let grant: VoiceGrant = serde_json::from_value(serde_json::json!({
+            "server_url": "wss://voice.example.test",
+            "participant_token": "header.payload.signature",
+            "expires_at_ms": expires_at_ms,
+        }))?;
+        validate_voice_grant(&grant).map_err(|error| error.detail)?;
+        let client_json = serde_json::to_value(&grant)?;
+        assert_eq!(
+            client_json["serverUrl"],
+            serde_json::Value::String("wss://voice.example.test".into())
+        );
+        assert!(client_json.get("server_url").is_none());
+
+        let invalid = VoiceGrant {
+            server_url: "http://voice.example.test".into(),
+            participant_token: "token with spaces".into(),
+            expires_at_ms: 0,
+        };
+        assert_eq!(
+            validate_voice_grant(&invalid)
+                .expect_err("invalid grant must be rejected")
+                .code,
+            "voiceGrant"
+        );
         Ok(())
     }
 

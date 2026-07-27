@@ -13,13 +13,18 @@ use libp2p::{
 };
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 use thiserror::Error;
 
 pub const NETWORK_PROTOCOL: &str = "/chatcommons/sync/1";
 pub const MAX_NETWORK_FRAME_BYTES: u64 = 1024 * 1024;
 pub const MAX_MESSAGES_PER_FRAME: usize = 64;
 pub const MAX_BOOTSTRAP_ANCESTRY_EVENTS: usize = 256;
+pub const MAX_VOICE_SERVER_URL_BYTES: usize = 2 * 1024;
+pub const MAX_VOICE_TOKEN_BYTES: usize = 16 * 1024;
 pub const IDENTIFY_PROTOCOL: &str = "/chatcommons/node/1";
 
 type RequestResponse = request_response::json::Behaviour<NetworkRequest, NetworkResponse>;
@@ -53,6 +58,9 @@ enum NetworkRequest {
         invitation: EventId,
         acceptance: SignedEvent,
     },
+    VoiceToken {
+        channel_id: [u8; 32],
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +78,9 @@ enum NetworkResponse {
         events: Vec<SignedEvent>,
     },
     BootstrapAccepted,
+    VoiceToken {
+        grant: VoiceGrant,
+    },
     Rejected {
         reason: RejectionCode,
     },
@@ -86,6 +97,8 @@ pub enum RejectionCode {
     InvalidBootstrap,
     InvitationUnavailable,
     BootstrapNotApproved,
+    VoiceUnavailable,
+    VoiceRoomUnavailable,
     FrameLimit,
 }
 
@@ -135,6 +148,16 @@ pub enum NetworkEvent {
         acceptance: Box<SignedEvent>,
     },
     BootstrapAccepted(PeerId),
+    VoiceTokenRequest {
+        peer: PeerId,
+        user_id: UserId,
+        device_id: auth::DeviceId,
+        channel_id: [u8; 32],
+    },
+    VoiceToken {
+        peer: PeerId,
+        grant: VoiceGrant,
+    },
     RequestFailed {
         peer: PeerId,
         reason: String,
@@ -169,6 +192,24 @@ pub struct BootstrapGrant {
     pub ancestry: Vec<SignedEvent>,
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceGrant {
+    pub server_url: String,
+    pub participant_token: String,
+    pub expires_at_ms: i64,
+}
+
+impl fmt::Debug for VoiceGrant {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VoiceGrant")
+            .field("server_url", &self.server_url)
+            .field("participant_token", &"[redacted]")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
 struct PendingChallenge {
     invitation: EventId,
     authenticated: auth::AuthenticatedDevice,
@@ -183,6 +224,10 @@ struct ProvedBootstrap {
 struct PendingAcceptance {
     invitation: EventId,
     authenticated: auth::AuthenticatedDevice,
+    channel: request_response::ResponseChannel<NetworkResponse>,
+}
+
+struct PendingVoiceToken {
     channel: request_response::ResponseChannel<NetworkResponse>,
 }
 
@@ -215,6 +260,7 @@ pub struct NetworkNode {
     pending_challenges: BTreeMap<PeerId, PendingChallenge>,
     proved_bootstraps: BTreeMap<PeerId, ProvedBootstrap>,
     pending_acceptances: BTreeMap<PeerId, PendingAcceptance>,
+    pending_voice_tokens: BTreeMap<PeerId, PendingVoiceToken>,
     bootstrap_target: Option<BootstrapTarget>,
     relay_peers: BTreeSet<PeerId>,
     relayed_application_peers: BTreeSet<PeerId>,
@@ -282,6 +328,7 @@ impl NetworkNode {
             pending_challenges: BTreeMap::new(),
             proved_bootstraps: BTreeMap::new(),
             pending_acceptances: BTreeMap::new(),
+            pending_voice_tokens: BTreeMap::new(),
             bootstrap_target: None,
             relay_peers: BTreeSet::new(),
             relayed_application_peers: BTreeSet::new(),
@@ -362,6 +409,10 @@ impl NetworkNode {
 
     pub fn is_authenticated(&self, peer: PeerId) -> bool {
         self.authenticated.contains(&peer)
+    }
+
+    pub fn is_mutually_authenticated(&self, peer: PeerId) -> bool {
+        self.authenticated.contains(&peer) && self.accepted_by_remote.contains(&peer)
     }
 
     /// Replace the live authorization projection after signed community state
@@ -589,6 +640,35 @@ impl NetworkNode {
         Ok(())
     }
 
+    pub fn request_voice_token(
+        &mut self,
+        peer: PeerId,
+        channel_id: [u8; 32],
+    ) -> Result<(), NetworkError> {
+        if !self.accepted_by_remote.contains(&peer) {
+            return Err(NetworkError::Rejected(RejectionCode::NotAuthenticated));
+        }
+        self.send(peer, NetworkRequest::VoiceToken { channel_id })
+    }
+
+    pub fn resolve_voice_token(
+        &mut self,
+        peer: PeerId,
+        result: Result<VoiceGrant, RejectionCode>,
+    ) -> Result<(), NetworkError> {
+        let pending = self.pending_voice_tokens.remove(&peer).ok_or_else(|| {
+            NetworkError::Request("peer has no pending voice token request".into())
+        })?;
+        let response = match result {
+            Ok(grant) => {
+                validate_voice_grant(&grant).map_err(NetworkError::Rejected)?;
+                NetworkResponse::VoiceToken { grant }
+            }
+            Err(reason) => NetworkResponse::Rejected { reason },
+        };
+        self.respond(pending.channel, response)
+    }
+
     pub async fn next_event(&mut self) -> Result<NetworkEvent, NetworkError> {
         loop {
             match self.swarm.select_next_some().await {
@@ -639,6 +719,7 @@ impl NetworkNode {
                     self.pending_challenges.remove(&peer_id);
                     self.proved_bootstraps.remove(&peer_id);
                     self.pending_acceptances.remove(&peer_id);
+                    self.pending_voice_tokens.remove(&peer_id);
                     return Ok(NetworkEvent::Disconnected(peer_id));
                 }
                 SwarmEvent::Behaviour(event) => {
@@ -757,6 +838,11 @@ impl NetworkNode {
                                 .handle_bootstrap_acceptance(peer, invitation, acceptance, channel)
                                 .map(Some);
                         }
+                        NetworkRequest::VoiceToken { channel_id } => {
+                            return self
+                                .handle_voice_token_request(peer, channel_id, channel)
+                                .map(Some);
+                        }
                         request => request,
                     };
                     let (response, authentication) = self.handle_request(peer, request);
@@ -850,7 +936,49 @@ impl NetworkNode {
                 },
                 None,
             ),
+            NetworkRequest::VoiceToken { .. } => (
+                NetworkResponse::Rejected {
+                    reason: RejectionCode::VoiceUnavailable,
+                },
+                None,
+            ),
         }
+    }
+
+    fn handle_voice_token_request(
+        &mut self,
+        peer: PeerId,
+        channel_id: [u8; 32],
+        channel: request_response::ResponseChannel<NetworkResponse>,
+    ) -> Result<NetworkEvent, NetworkError> {
+        let authenticated = self.authenticated_devices.get(&peer).copied();
+        let Some(authenticated) = authenticated.filter(|_| self.authenticated.contains(&peer))
+        else {
+            self.respond(
+                channel,
+                NetworkResponse::Rejected {
+                    reason: RejectionCode::NotAuthenticated,
+                },
+            )?;
+            return Ok(NetworkEvent::SyncProgress(peer));
+        };
+        if self.pending_voice_tokens.contains_key(&peer) {
+            self.respond(
+                channel,
+                NetworkResponse::Rejected {
+                    reason: RejectionCode::VoiceUnavailable,
+                },
+            )?;
+            return Ok(NetworkEvent::SyncProgress(peer));
+        }
+        self.pending_voice_tokens
+            .insert(peer, PendingVoiceToken { channel });
+        Ok(NetworkEvent::VoiceTokenRequest {
+            peer,
+            user_id: authenticated.user_id,
+            device_id: authenticated.device_id,
+            channel_id,
+        })
     }
 
     fn begin_bootstrap(
@@ -1084,6 +1212,13 @@ impl NetworkNode {
                 let _ = target;
                 Ok(NetworkEvent::BootstrapAccepted(peer))
             }
+            NetworkResponse::VoiceToken { grant } => {
+                if !self.accepted_by_remote.contains(&peer) {
+                    return Err(NetworkError::Rejected(RejectionCode::NotAuthenticated));
+                }
+                validate_voice_grant(&grant).map_err(NetworkError::Rejected)?;
+                Ok(NetworkEvent::VoiceToken { peer, grant })
+            }
             NetworkResponse::Rejected {
                 reason: RejectionCode::UserNotAllowed,
             } if self
@@ -1263,4 +1398,17 @@ fn normalize_messages(messages: Vec<SyncMessage>) -> Result<Vec<SyncMessage>, Re
         return Err(RejectionCode::FrameLimit);
     }
     Ok(normalized)
+}
+
+fn validate_voice_grant(grant: &VoiceGrant) -> Result<(), RejectionCode> {
+    let valid_url = grant.server_url.starts_with("wss://")
+        && grant.server_url.len() <= MAX_VOICE_SERVER_URL_BYTES
+        && !grant.server_url.chars().any(char::is_whitespace);
+    let valid_token = !grant.participant_token.is_empty()
+        && grant.participant_token.len() <= MAX_VOICE_TOKEN_BYTES
+        && !grant.participant_token.chars().any(char::is_whitespace);
+    if !valid_url || !valid_token || grant.expires_at_ms <= 0 {
+        return Err(RejectionCode::VoiceUnavailable);
+    }
+    Ok(())
 }

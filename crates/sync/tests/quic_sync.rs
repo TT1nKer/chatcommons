@@ -8,7 +8,7 @@ use chatcommons_storage::EventStore;
 use chatcommons_sync::{
     SyncPeer,
     auth::{DeviceIdentity, RevocationSet, create_device_certificate},
-    network::{NetworkEvent, NetworkNode},
+    network::{NetworkEvent, NetworkNode, VoiceGrant},
 };
 use libp2p::Multiaddr;
 use std::{collections::BTreeSet, time::Duration};
@@ -94,5 +94,42 @@ async fn two_real_quic_swarms_authenticate_and_sync_sqlite()
     .await??;
 
     assert_eq!(target.sync_peer().node().event_ids().len(), 3);
+    let channel_id = [7; 32];
+    target.request_voice_token(source_peer, channel_id)?;
+    let received_grant = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            tokio::select! {
+                event = source.next_event() => {
+                    if let NetworkEvent::VoiceTokenRequest {
+                        peer,
+                        user_id,
+                        device_id,
+                        channel_id: requested_channel,
+                    } = event?
+                    {
+                        assert_eq!(peer, target_peer);
+                        assert_eq!(user_id, bob.user_id());
+                        assert_eq!(device_id, bob_device.device_id());
+                        assert_eq!(requested_channel, channel_id);
+                        source.resolve_voice_token(peer, Ok(VoiceGrant {
+                            server_url: "wss://voice.example.test".into(),
+                            participant_token: "header.payload.signature".into(),
+                            expires_at_ms: 60_000,
+                        }))?;
+                    }
+                }
+                event = target.next_event() => {
+                    if let NetworkEvent::VoiceToken { peer, grant } = event? {
+                        assert_eq!(peer, source_peer);
+                        break Ok::<VoiceGrant, chatcommons_sync::network::NetworkError>(grant);
+                    }
+                }
+            }
+        }
+    })
+    .await??;
+    assert_eq!(received_grant.server_url, "wss://voice.example.test");
+    assert_eq!(received_grant.participant_token, "header.payload.signature");
+    assert!(!format!("{received_grant:?}").contains("header.payload.signature"));
     Ok(())
 }

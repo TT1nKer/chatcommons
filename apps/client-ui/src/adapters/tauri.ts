@@ -5,6 +5,8 @@ import type {
   FeedbackStatus,
   Message,
   SendMessageInput,
+  VoiceGrant,
+  VoiceTokenInput,
 } from '../domain';
 import { ClientBridgeError } from '../domain';
 
@@ -68,6 +70,10 @@ export class TauriAdapter implements ClientAdapter {
 
   sendMessage(input: SendMessageInput): Promise<Message> {
     return call<Message>('send_message', { input });
+  }
+
+  voiceToken(input: VoiceTokenInput): Promise<VoiceGrant> {
+    return call<VoiceGrant>('voice_token', { input });
   }
 
   submitFeedback(input: FeedbackInput): Promise<FeedbackStatus> {

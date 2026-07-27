@@ -6,6 +6,37 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5] - 2026-07-27
+
+### Added
+
+- Authorized room voice for up to ten invited members through a replaceable
+  self-hosted LiveKit SFU.
+- Five-minute microphone-only media grants issued only after the Community Home
+  Server authenticates the device and revalidates membership and channel state.
+- Desktop join, reconnecting, participant, mute, leave and microphone-error
+  states with Chinese and English copy.
+
+### Security
+
+- Media API secrets remain server-only and voice grants are bounded, validated,
+  short-lived and redacted from debug output.
+- Community snapshots now exclude voice issuer credentials and restore with
+  voice disabled until an operator provisions a new key.
+
+### Changed
+
+- The browser and text client load the media SDK only when voice is requested,
+  keeping voice code out of the initial application bundle.
+- Linux Home Server builds move to the test server rather than consuming local
+  desktop storage.
+
+### Limitations
+
+- Voice media is not end-to-end encrypted in this alpha. The community-operated
+  SFU can observe media and connection metadata.
+- Video, recording, broadcast and browser-review voice remain unavailable.
+
 ## [0.1.0-alpha.4] - 2026-07-27
 
 ### Added

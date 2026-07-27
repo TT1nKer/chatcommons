@@ -1,0 +1,12 @@
+# Copy to /etc/livekit/livekit.yaml as root:livekit mode 0640.
+# Replace both credentials with independently generated random values.
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50020
+  use_external_ip: true
+room:
+  max_participants: 10
+keys:
+  replace-api-key: replace-with-at-least-32-random-characters

@@ -5,7 +5,10 @@ import type {
   FeedbackStatus,
   Message,
   SendMessageInput,
+  VoiceGrant,
+  VoiceTokenInput,
 } from '../domain';
+import { ClientBridgeError } from '../domain';
 
 const snapshot: ClientSnapshot = {
   mode: 'demo',
@@ -122,6 +125,13 @@ export class DemoAdapter implements ClientAdapter {
       body: input.body,
       own: true,
     };
+  }
+
+  async voiceToken(_input: VoiceTokenInput): Promise<VoiceGrant> {
+    throw new ClientBridgeError(
+      'voiceDesktopOnly',
+      'Voice is available in the desktop alpha.',
+    );
   }
 
   async submitFeedback(_input: FeedbackInput): Promise<FeedbackStatus> {

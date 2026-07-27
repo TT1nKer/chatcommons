@@ -2,7 +2,7 @@ mod runtime;
 
 use runtime::{
     ClientError, ClientMessage, ClientSnapshot, FeedbackInput, FeedbackStatus, RuntimeState,
-    SendMessageInput,
+    SendMessageInput, VoiceGrant, VoiceTokenInput,
 };
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
@@ -30,6 +30,14 @@ async fn send_message(
     input: SendMessageInput,
 ) -> Result<ClientMessage, ClientError> {
     state.send(input).await
+}
+
+#[tauri::command]
+async fn voice_token(
+    state: State<'_, RuntimeState>,
+    input: VoiceTokenInput,
+) -> Result<VoiceGrant, ClientError> {
+    state.voice_token(input).await
 }
 
 #[tauri::command]
@@ -65,6 +73,7 @@ pub fn run() {
             sync_client,
             join_community,
             send_message,
+            voice_token,
             submit_feedback,
             feedback_status
         ])
