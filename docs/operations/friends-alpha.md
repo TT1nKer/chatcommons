@@ -56,13 +56,17 @@ not forward microphone traffic. The deployed limits are:
 - 10 participants per room;
 - TCP 7881 as WebRTC fallback;
 - UDP 50000–50020 for WebRTC media;
-- HTTPS/WSS signaling through `voice.ttinker.net` and nginx;
+- HTTPS/WSS signaling through `wss://ttinker.net` and nginx `/rtc`;
 - no video, recording or media E2EE.
 
 The cloud security group and UFW must allow TCP 7881 and UDP 50000–50020.
 TCP 7880 remains host-local behind nginx. The voice API key and secret exist in
 both `/etc/livekit/livekit.yaml` and the root-only Home Server environment.
 They must never be copied to clients, logs, archives or this repository.
+The friends-alpha deployment temporarily shares the existing `ttinker.net` TLS
+origin to avoid a second DNS dependency. Nginx proxies only `/rtc` to LiveKit,
+using `deploy/nginx/chatcommons-livekit-rtc.conf`. A later move to a dedicated
+voice hostname changes only the Home Server URL and reverse-proxy endpoint.
 The snapshot script removes all three voice variables; after a restore, issue a
 new media-service key before re-enabling voice.
 

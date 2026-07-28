@@ -8,6 +8,11 @@ The unit permits `AF_NETLINK` only because libp2p uses `NETLINK_ROUTE` to
 enumerate local interfaces before publishing its QUIC listen addresses; the
 service still receives no Linux capabilities.
 
+The optional `nginx/chatcommons-livekit-rtc.conf` fragment terminates WSS for
+the LiveKit signaling endpoint. Include it inside the TLS virtual host named by
+`CHATCOMMONS_VOICE_SERVER_URL`; WebRTC media ports remain directly exposed as
+described in `docs/operations/friends-alpha.md`.
+
 ## Install the process
 
 Build `chatcommons-node` for the target Linux host, then install it and the unit:
