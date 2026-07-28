@@ -24,6 +24,11 @@ class ReviewServerTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.temporary = tempfile.TemporaryDirectory()
         root = Path(cls.temporary.name)
+        downloads = root / "downloads"
+        downloads.mkdir()
+        cls.download_name = "ChatCommons-alpha-0.1.0-alpha.5-macOS-arm64.zip"
+        cls.download_content = b"friends-alpha-installer"
+        (downloads / cls.download_name).write_bytes(cls.download_content)
         os.environ.update(
             {
                 "REVIEW_DB_PATH": str(root / "reviews.sqlite3"),
@@ -31,6 +36,7 @@ class ReviewServerTest(unittest.TestCase):
                 "REVIEW_TOKEN": REVIEW_TOKEN,
                 "OWNER_TOKEN": OWNER_TOKEN,
                 "REVIEW_ALLOWED_ORIGIN": ORIGIN,
+                "REVIEW_DOWNLOAD_DIR": str(downloads),
             }
         )
         config = Config()
@@ -122,6 +128,30 @@ class ReviewServerTest(unittest.TestCase):
                     Config().validate()
         finally:
             os.environ["REVIEW_ALLOWED_ORIGIN"] = original
+
+    def test_installer_download_requires_review_authorization(self):
+        path = f"/api/downloads/{self.download_name}"
+        status, _, _ = self.request("GET", path, origin=None)
+        self.assertEqual(status, 401)
+
+        status, _, _ = self.request(
+            "GET",
+            "/api/downloads/../../server.py",
+            token=REVIEW_TOKEN,
+            origin=None,
+        )
+        self.assertEqual(status, 404)
+
+        status, headers, body = self.request(
+            "GET",
+            path,
+            token=REVIEW_TOKEN,
+            origin=None,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get_content_type(), "application/zip")
+        self.assertIn(self.download_name, headers["Content-Disposition"])
+        self.assertEqual(body, self.download_content)
 
     def test_missing_wrong_and_valid_reviewer_credentials(self):
         status, _, _ = self.request("GET", "/api/reviews")

@@ -171,6 +171,9 @@ class FrontendLocalizationContractTest(unittest.TestCase):
             "Invited friends can choose the macOS or Windows client.",
             localization,
         )
+        self.assertIn("function downloadClient(event)", review)
+        self.assertIn("'X-Review-Token': token", review)
+        self.assertIn("./api/downloads/", review)
         self.assertNotIn("data-review-only", application)
         self.assertIn("dataset.reviewAuthorized = 'true'", review)
         self.assertIn('[data-review-only] { display: none !important; }', styles)

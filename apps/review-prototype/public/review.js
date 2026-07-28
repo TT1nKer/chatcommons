@@ -102,6 +102,36 @@
     return body;
   }
 
+  async function downloadClient(event) {
+    event.preventDefault();
+    const anchor = event.currentTarget;
+    const filename = new URL(anchor.href).pathname.split('/').pop();
+    if (!filename) return;
+    anchor.setAttribute('aria-busy', 'true');
+    try {
+      const response = await fetch(`./api/downloads/${encodeURIComponent(filename)}`, {
+        credentials: 'same-origin',
+        headers: { 'X-Review-Token': token },
+      });
+      if (!response.ok) {
+        throw new Error(l(
+          '安装包暂时无法下载，请稍后再试',
+          'The installer is temporarily unavailable. Please try again later.',
+        ));
+      }
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const temporaryLink = document.createElement('a');
+      temporaryLink.href = objectUrl;
+      temporaryLink.download = filename;
+      temporaryLink.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      anchor.removeAttribute('aria-busy');
+    }
+  }
+
   function currentScreen() {
     return document.documentElement.dataset.reviewScreen || 'home';
   }
@@ -530,6 +560,9 @@
     <div class="review-toolbar-actions"><button type="button" data-review-select>标注意见</button><button type="button" class="secondary" data-review-list>已有意见</button><button type="button" class="secondary" data-review-share>复制审阅链接</button></div><div class="review-list" id="review-list" hidden></div></div>`;
   window.chatcommonsI18n.translateSubtree(toolbar);
   document.body.appendChild(toolbar);
+  $$('a.alpha-download-button').forEach((anchor) => {
+    anchor.addEventListener('click', downloadClient);
+  });
   $('[data-review-collapse]').onclick = () => setCollapsed(!state.collapsed);
   $('[data-review-select]').onclick = () => setSelecting(!state.selecting);
   $('[data-review-list]').onclick = () => { const list = $('#review-list'); list.hidden = !list.hidden; if (!list.hidden) renderList(); };
