@@ -1,3 +1,13 @@
+<p align="center">
+  <img src="docs/readme-cover.svg" alt="ChatCommons — community protocol" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://ttinker.net">ttinker.net</a> ·
+  <a href="docs/protocol.md">protocol</a> ·
+  <a href="docs/governance/control-boundaries.md">control boundaries</a>
+</p>
+
 # ChatCommons
 
 Current product version: `0.1.0-alpha.3` (friends-and-contributors alpha).
@@ -14,6 +24,10 @@ declaration with a bounded diagnostic authenticated Home Server process. The
 workspace now also contains a minimal native friends-alpha text client. It
 contains no production hosted service, trusted release binary, voice
 implementation, account recovery or multi-device identity.
+
+| State | Evidence | Current boundary |
+| --- | --- | --- |
+| Friends-and-contributors alpha | Workspace quality gates, protocol test vectors, native client captures | No production service, trusted release binary, voice, recovery, or multi-device identity |
 
 ## Friends-alpha preview
 
