@@ -28,9 +28,21 @@ describe('client localization', () => {
     expect(copyFor('en').feedbackTitle).toBe('Feedback & issues');
     expect(copyFor('zh-CN').voiceChecking).toContain('检查麦克风');
     expect(copyFor('en').voiceChecking).toContain('Checking microphone');
+    expect(copyFor('zh-CN').voiceMicrophoneInput).toBe('输入麦克风');
+    expect(copyFor('en').voiceMicrophoneInput).toBe('Input microphone');
+    expect(copyFor('zh-CN').voiceMicrophoneNumber(2)).toBe('麦克风 2');
+    expect(copyFor('en').voiceMicrophoneNumber(2)).toBe('Microphone 2');
+    expect(copyFor('zh-CN').voiceSavedMicrophone).toBe('已保存的麦克风');
+    expect(copyFor('en').voiceSavedMicrophone).toBe('Saved microphone');
+    expect(copyFor('zh-CN').voiceSwitchingMicrophone).toContain('切换麦克风');
+    expect(copyFor('en').voiceSwitchingMicrophone).toContain('Switching microphone');
     expect(copyFor('zh-CN').errorMessage('voicePermissionMac')).toContain('隐私与安全性');
     expect(copyFor('en').errorMessage('voicePermissionWindows')).toContain('Privacy & security');
     expect(copyFor('zh-CN').errorMessage('voiceMicrophoneMissing')).toContain('没有找到麦克风');
     expect(copyFor('en').errorMessage('voiceMicrophoneBusy')).toContain('another app');
+    expect(copyFor('zh-CN').errorMessage('voiceMicrophoneSelectionMissing'))
+      .toContain('系统默认设备');
+    expect(copyFor('en').errorMessage('voiceMicrophoneSelectionMissing'))
+      .toContain('system default');
   });
 });

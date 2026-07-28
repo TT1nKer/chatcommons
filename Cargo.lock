@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "chatcommons-cli"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "base64 0.22.1",
  "chatcommons-crypto",
@@ -745,7 +745,7 @@ dependencies = [
 
 [[package]]
 name = "chatcommons-crypto"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "chatcommons-desktop"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "base64 0.22.1",
  "directories",
@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "chatcommons-node-core"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "blake3",
  "chatcommons-crypto",
@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "chatcommons-profile-chat"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "blake3",
  "chatcommons-crypto",
@@ -802,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "chatcommons-protocol"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "blake3",
  "chatcommons-crypto",
@@ -814,7 +814,7 @@ dependencies = [
 
 [[package]]
 name = "chatcommons-relay"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "futures",
  "libp2p",
@@ -824,7 +824,7 @@ dependencies = [
 
 [[package]]
 name = "chatcommons-storage"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "chatcommons-crypto",
  "chatcommons-protocol",
@@ -837,7 +837,7 @@ dependencies = [
 
 [[package]]
 name = "chatcommons-sync"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "base64 0.22.1",
  "blake3",

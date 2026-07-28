@@ -480,6 +480,36 @@ label:has(input:focus-visible) {
   gap: 7px;
 }
 
+.voice-entry {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.microphone-picker select {
+  width: 138px;
+  height: 32px;
+  padding: 0 24px 0 9px;
+  border: 1px solid #3a3c46;
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+  color-scheme: dark;
+  font: inherit;
+  font-size: 9px;
+  text-overflow: ellipsis;
+}
+
+.microphone-picker select:hover:not(:disabled),
+.microphone-picker select:focus-visible {
+  border-color: rgb(132 184 154 / .55);
+  color: var(--ink);
+}
+
+.microphone-picker select:disabled {
+  opacity: .55;
+}
+
 .voice-join {
   min-height: 32px;
   display: flex;
@@ -1410,6 +1440,10 @@ label:has(input:focus-visible) {
     padding: 0;
     justify-content: center;
     font-size: 0;
+  }
+
+  .microphone-picker select {
+    width: 112px;
   }
 
   .now-columns {

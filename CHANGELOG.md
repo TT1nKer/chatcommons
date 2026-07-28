@@ -6,6 +6,22 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] - 2026-07-28
+
+### Added
+
+- A local microphone selector beside the voice action, with the system default
+  preserved as the zero-configuration choice.
+- Remembered per-device microphone preference and automatic refresh when audio
+  input devices are connected or removed.
+
+### Changed
+
+- The chosen microphone is now used consistently for both local preflight and
+  LiveKit capture. A removed saved device falls back to the system default.
+- Device labels that remain hidden before the first permission grant use
+  localized numbered placeholders and refresh after a successful preflight.
+
 ## [0.1.0-alpha.6] - 2026-07-28
 
 ### Added

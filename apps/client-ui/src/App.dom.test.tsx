@@ -17,9 +17,14 @@ const voiceSdk = vi.hoisted(() => ({
   disconnect: vi.fn().mockResolvedValue(undefined),
   startAudio: vi.fn().mockResolvedValue(undefined),
   setMicrophoneEnabled: vi.fn().mockResolvedValue(undefined),
+  switchActiveDevice: vi.fn().mockResolvedValue(undefined),
 }));
 const microphoneSdk = vi.hoisted(() => ({
+  addEventListener: vi.fn(),
+  deviceChangeListeners: new Set<() => void>(),
+  enumerateDevices: vi.fn(),
   getUserMedia: vi.fn(),
+  removeEventListener: vi.fn(),
   stop: vi.fn(),
 }));
 
@@ -44,6 +49,8 @@ vi.mock('livekit-client', () => {
     disconnect = voiceSdk.disconnect;
 
     startAudio = voiceSdk.startAudio;
+
+    switchActiveDevice = voiceSdk.switchActiveDevice;
   }
 
   return {
@@ -138,6 +145,20 @@ function sentMessage(body: string): Message {
   };
 }
 
+function mediaDevice(
+  deviceId: string,
+  label: string,
+  kind: MediaDeviceKind = 'audioinput',
+): MediaDeviceInfo {
+  return {
+    deviceId,
+    groupId: `${deviceId}-group`,
+    kind,
+    label,
+    toJSON: () => ({}),
+  };
+}
+
 function createAdapter(
   overrides: Partial<ClientAdapter> = {},
 ): ClientAdapter {
@@ -183,6 +204,21 @@ function setText(element: Element | null, value: string) {
   });
 }
 
+function selectOption(element: Element | null, value: string) {
+  if (!(element instanceof HTMLSelectElement)) {
+    throw new Error('expected select element');
+  }
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLSelectElement.prototype,
+    'value',
+  )?.set;
+  if (!setter) throw new Error('select value setter unavailable');
+  act(() => {
+    setter.call(element, value);
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 function roomButton(container: HTMLElement, roomName: string): HTMLButtonElement {
   const button = [...container.querySelectorAll<HTMLButtonElement>('.tree-rooms button')]
     .find((item) => item.textContent?.includes(roomName));
@@ -220,6 +256,20 @@ describe('App behavior', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    microphoneSdk.deviceChangeListeners.clear();
+    microphoneSdk.enumerateDevices.mockResolvedValue([]);
+    microphoneSdk.addEventListener.mockImplementation((
+      type: string,
+      listener: () => void,
+    ) => {
+      if (type === 'devicechange') microphoneSdk.deviceChangeListeners.add(listener);
+    });
+    microphoneSdk.removeEventListener.mockImplementation((
+      type: string,
+      listener: () => void,
+    ) => {
+      if (type === 'devicechange') microphoneSdk.deviceChangeListeners.delete(listener);
+    });
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     const storage = memoryStorage();
     Object.defineProperty(globalThis, 'localStorage', {
@@ -260,7 +310,12 @@ describe('App behavior', () => {
     microphoneSdk.getUserMedia.mockResolvedValue(microphoneStream);
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
-      value: { getUserMedia: microphoneSdk.getUserMedia },
+      value: {
+        addEventListener: microphoneSdk.addEventListener,
+        enumerateDevices: microphoneSdk.enumerateDevices,
+        getUserMedia: microphoneSdk.getUserMedia,
+        removeEventListener: microphoneSdk.removeEventListener,
+      },
     });
     Object.defineProperty(window, 'AudioContext', {
       configurable: true,
@@ -547,6 +602,146 @@ describe('App behavior', () => {
     expect(container.querySelector('.voice-dock')).toBeNull();
   });
 
+  it('uses the selected microphone for preflight and LiveKit capture', async () => {
+    microphoneSdk.enumerateDevices.mockResolvedValue([
+      mediaDevice('usb-microphone', 'USB microphone'),
+      mediaDevice('hidden-label-microphone', ''),
+      mediaDevice('camera', 'Camera', 'videoinput'),
+    ]);
+    const voiceToken = vi.fn().mockResolvedValue({
+      serverUrl: 'wss://voice.example.test',
+      participantToken: 'signed-participant-token',
+      expiresAtMs: Date.now() + 60_000,
+    });
+    await render(createAdapter({ kind: 'tauri', voiceToken }));
+    await settle();
+
+    click(roomButton(container, 'Room A'));
+    const microphoneSelect = container.querySelector('.microphone-picker select');
+    expect(microphoneSelect?.textContent).toContain('USB microphone');
+    expect(microphoneSelect?.textContent).toContain('Microphone 2');
+    selectOption(microphoneSelect, 'usb-microphone');
+    expect(window.localStorage.getItem('chatcommons-preferred-microphone'))
+      .toBe('usb-microphone');
+
+    click(container.querySelector('.voice-join'));
+    await settle();
+    await settle();
+
+    expect(microphoneSdk.getUserMedia).toHaveBeenCalledWith({
+      audio: { deviceId: { exact: 'usb-microphone' } },
+      video: false,
+    });
+    expect(voiceSdk.setMicrophoneEnabled).toHaveBeenCalledWith(
+      true,
+      { deviceId: 'usb-microphone' },
+    );
+    expect(container.querySelector('.microphone-picker select'))
+      .toHaveProperty('disabled', false);
+
+    selectOption(container.querySelector('.microphone-picker select'), '');
+    await settle();
+    expect(voiceSdk.switchActiveDevice)
+      .toHaveBeenCalledWith('audioinput', 'default');
+    expect(window.localStorage.getItem('chatcommons-preferred-microphone')).toBeNull();
+
+    voiceSdk.switchActiveDevice.mockRejectedValueOnce(
+      new DOMException('Permission denied', 'NotAllowedError'),
+    );
+    selectOption(container.querySelector('.microphone-picker select'), 'usb-microphone');
+    await settle();
+    await settle();
+
+    expect(container.querySelector<HTMLSelectElement>('.microphone-picker select')?.value)
+      .toBe('');
+    expect(window.localStorage.getItem('chatcommons-preferred-microphone')).toBeNull();
+    expect(container.querySelector('.voice-dock')?.textContent)
+      .toContain('The microphone is unavailable');
+  });
+
+  it('returns to the system default when the saved microphone is unplugged', async () => {
+    microphoneSdk.enumerateDevices.mockResolvedValue([
+      mediaDevice('usb-microphone', 'USB microphone'),
+    ]);
+    await render(createAdapter());
+    await settle();
+
+    click(roomButton(container, 'Room A'));
+    const microphoneSelect = container.querySelector('.microphone-picker select');
+    selectOption(microphoneSelect, 'usb-microphone');
+    microphoneSdk.enumerateDevices.mockResolvedValue([]);
+    act(() => {
+      for (const listener of microphoneSdk.deviceChangeListeners) listener();
+    });
+    await settle();
+
+    expect(container.querySelector<HTMLSelectElement>('.microphone-picker select')?.value)
+      .toBe('');
+    expect(window.localStorage.getItem('chatcommons-preferred-microphone')).toBeNull();
+  });
+
+  it('ignores a stale device list that resolves after a newer refresh', async () => {
+    const staleDevices = deferred<MediaDeviceInfo[]>();
+    microphoneSdk.enumerateDevices
+      .mockImplementationOnce(() => staleDevices.promise)
+      .mockResolvedValueOnce([mediaDevice('new-microphone', 'New microphone')]);
+    await render(createAdapter());
+
+    act(() => {
+      for (const listener of microphoneSdk.deviceChangeListeners) listener();
+    });
+    await settle();
+    click(roomButton(container, 'Room A'));
+    expect(container.querySelector('.microphone-picker select')?.textContent)
+      .toContain('New microphone');
+
+    await act(async () => {
+      staleDevices.resolve([mediaDevice('old-microphone', 'Old microphone')]);
+      await staleDevices.promise;
+    });
+    await settle();
+
+    const options = container.querySelector('.microphone-picker select')?.textContent;
+    expect(options).toContain('New microphone');
+    expect(options).not.toContain('Old microphone');
+  });
+
+  it('uses the visible system default when device enumeration fails', async () => {
+    window.localStorage.setItem(
+      'chatcommons-preferred-microphone',
+      'unavailable-microphone',
+    );
+    microphoneSdk.enumerateDevices.mockRejectedValue(
+      new DOMException('Enumeration failed', 'NotAllowedError'),
+    );
+    await render(createAdapter());
+    await settle();
+    click(roomButton(container, 'Room A'));
+
+    expect(container.querySelector<HTMLSelectElement>('.microphone-picker select')?.value)
+      .toBe('');
+    expect(window.localStorage.getItem('chatcommons-preferred-microphone')).toBeNull();
+  });
+
+  it('keeps a saved microphone while labels are hidden before permission', async () => {
+    window.localStorage.setItem(
+      'chatcommons-preferred-microphone',
+      'saved-microphone',
+    );
+    microphoneSdk.enumerateDevices.mockResolvedValue([]);
+    await render(createAdapter());
+    await settle();
+    click(roomButton(container, 'Room A'));
+
+    const microphoneSelect = container.querySelector<HTMLSelectElement>(
+      '.microphone-picker select',
+    );
+    expect(microphoneSelect?.value).toBe('saved-microphone');
+    expect(microphoneSelect?.textContent).toContain('Saved microphone');
+    expect(window.localStorage.getItem('chatcommons-preferred-microphone'))
+      .toBe('saved-microphone');
+  });
+
   it('does not request a voice grant when no microphone is available', async () => {
     const voiceToken = vi.fn();
     microphoneSdk.getUserMedia.mockRejectedValue(
@@ -577,6 +772,10 @@ describe('App behavior', () => {
       { name: 'NotReadableError' },
       'Mozilla/5.0',
     )).toBe('voiceMicrophoneBusy');
+    expect(microphoneFailureCode(
+      { name: 'OverconstrainedError' },
+      'Mozilla/5.0',
+    )).toBe('voiceMicrophoneSelectionMissing');
   });
 
   it('does not let an older status request hide a new feedback receipt', async () => {

@@ -27,6 +27,7 @@ import {
   sessionReducer,
   type RoomSelection,
 } from './session';
+import type { MicrophoneDevice } from './voice/microphone';
 import { useVoiceSession, type VoiceParticipant, type VoiceStatus } from './voice/useVoiceSession';
 
 const localeStorageKey = 'chatcommons-locale';
@@ -413,29 +414,62 @@ export function App({ adapter }: AppProps) {
             </div>
             <nav className="context-actions" aria-label={copy.globalActions}>
               {screen === 'community' && community && room && (
-                <button
-                  className={`voice-join is-${voice.status}`}
-                  type="button"
-                  disabled={
-                    voice.roomKey === activeRoomKey
-                    && (
-                      voice.status === 'checking'
-                      || voice.status === 'connecting'
-                      || voice.status === 'connected'
-                      || voice.status === 'reconnecting'
-                    )
-                  }
-                  onClick={joinVoice}
-                >
-                  <span aria-hidden="true">◖</span>
-                  {voice.status === 'checking' && voice.roomKey === activeRoomKey
-                    ? copy.voiceChecking
-                    : voice.status === 'connecting' && voice.roomKey === activeRoomKey
-                    ? copy.voiceConnecting
-                    : voice.status === 'connected' && voice.roomKey === activeRoomKey
-                      ? copy.voiceConnected
-                      : copy.joinVoice}
-                </button>
+                <div className="voice-entry">
+                  <label className="microphone-picker">
+                    <span className="sr-only">{copy.voiceMicrophoneInput}</span>
+                    <select
+                      aria-label={copy.voiceMicrophoneInput}
+                      aria-busy={voice.switchingMicrophone}
+                      value={voice.selectedMicrophoneId}
+                      disabled={
+                        voice.status === 'checking'
+                        || voice.status === 'connecting'
+                        || voice.status === 'reconnecting'
+                        || voice.switchingMicrophone
+                      }
+                      onChange={(event) => void voice.selectMicrophone(event.target.value)}
+                    >
+                      <option value="">{copy.voiceDefaultMicrophone}</option>
+                      {voice.selectedMicrophoneId
+                        && !voice.microphones.some(
+                          (microphone) => microphone.id === voice.selectedMicrophoneId,
+                        )
+                        && (
+                          <option value={voice.selectedMicrophoneId}>
+                            {copy.voiceSavedMicrophone}
+                          </option>
+                        )}
+                      {voice.microphones.map((microphone, index) => (
+                        <option value={microphone.id} key={microphone.id}>
+                          {microphone.label || copy.voiceMicrophoneNumber(index + 1)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className={`voice-join is-${voice.status}`}
+                    type="button"
+                    disabled={
+                      voice.roomKey === activeRoomKey
+                      && (
+                        voice.status === 'checking'
+                        || voice.status === 'connecting'
+                        || voice.status === 'connected'
+                        || voice.status === 'reconnecting'
+                      )
+                    }
+                    onClick={joinVoice}
+                  >
+                    <span aria-hidden="true">◖</span>
+                    {voice.status === 'checking' && voice.roomKey === activeRoomKey
+                      ? copy.voiceChecking
+                      : voice.status === 'connecting' && voice.roomKey === activeRoomKey
+                      ? copy.voiceConnecting
+                      : voice.status === 'connected' && voice.roomKey === activeRoomKey
+                        ? copy.voiceConnected
+                        : copy.joinVoice}
+                  </button>
+                </div>
               )}
               <span className={`connection-dot is-${snapshot.connection.status}`} title={copy.connection(snapshot.connection.status)}>
                 <i aria-hidden="true" />
@@ -737,10 +771,14 @@ interface CommunityScreenProps {
     roomKey: string;
     roomName: string;
     muted: boolean;
+    switchingMicrophone: boolean;
     microphoneName: string;
     microphoneLevel: number;
+    microphones: MicrophoneDevice[];
+    selectedMicrophoneId: string;
     participants: VoiceParticipant[];
     errorCode: string;
+    selectMicrophone: (deviceId: string) => Promise<void>;
     leave: () => void;
     toggleMute: () => Promise<void>;
   };
@@ -839,6 +877,9 @@ function VoiceDock({
     reconnecting: copy.voiceReconnecting,
     error: copy.voiceError,
   }[voice.status];
+  const currentStatusLabel = voice.switchingMicrophone
+    ? copy.voiceSwitchingMicrophone
+    : statusLabel;
   const microphoneName = voice.microphoneName || copy.voiceDefaultMicrophone;
   const level = Math.max(0.08, voice.microphoneLevel);
 
@@ -855,9 +896,11 @@ function VoiceDock({
           <small>
             {voice.status === 'error'
               ? copy.errorMessage(voice.errorCode)
+              : voice.errorCode
+                ? copy.errorMessage(voice.errorCode)
               : voice.status === 'checking'
                 ? `${copy.voiceMicrophoneDetected(microphoneName)} · ${statusLabel}`
-              : `${statusLabel} · ${copy.voiceParticipants(voice.participants.length)}`}
+              : `${currentStatusLabel} · ${copy.voiceParticipants(voice.participants.length)}`}
           </small>
         </span>
       </div>

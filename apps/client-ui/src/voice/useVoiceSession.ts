@@ -15,7 +15,8 @@ import {
   type ClientAdapter,
   type VoiceGrant,
 } from '../domain';
-import { previewMicrophone } from './microphone';
+import { microphoneFailureCode, previewMicrophone } from './microphone';
+import { useMicrophoneSelection } from './useMicrophoneSelection';
 
 const minimumTokenLifetimeMs = 5_000;
 const maximumTokenBytes = 16 * 1024;
@@ -41,6 +42,7 @@ interface VoiceSessionState {
   roomKey: string;
   roomName: string;
   muted: boolean;
+  switchingMicrophone: boolean;
   microphoneName: string;
   microphoneLevel: number;
   participants: VoiceParticipant[];
@@ -52,6 +54,7 @@ const initialState: VoiceSessionState = {
   roomKey: '',
   roomName: '',
   muted: false,
+  switchingMicrophone: false,
   microphoneName: '',
   microphoneLevel: 0,
   participants: [],
@@ -94,9 +97,11 @@ function participantView(
 
 export function useVoiceSession(adapter: ClientAdapter) {
   const [state, setState] = useState<VoiceSessionState>(initialState);
+  const microphoneSelection = useMicrophoneSelection();
   const roomRef = useRef<LiveKitRoom | null>(null);
   const audioElements = useRef(new Set<HTMLMediaElement>());
   const previewAbort = useRef<AbortController | null>(null);
+  const microphoneSwitchInFlight = useRef(false);
   const generation = useRef(0);
 
   const removeAudio = useCallback(() => {
@@ -168,9 +173,11 @@ export function useVoiceSession(adapter: ClientAdapter) {
       let microphoneReady = false;
       try {
         microphoneReady = await previewMicrophone({
+          deviceId: microphoneSelection.selectedMicrophoneId,
           signal: abortController.signal,
           onReady: (microphoneName) => {
             if (generation.current !== attempt) return;
+            void microphoneSelection.refreshMicrophones();
             setState((current) => ({
               ...current,
               microphoneName,
@@ -267,7 +274,14 @@ export function useVoiceSession(adapter: ClientAdapter) {
         return;
       }
       await liveRoom.startAudio();
-      await liveRoom.localParticipant.setMicrophoneEnabled(true);
+      if (microphoneSelection.selectedMicrophoneId) {
+        await liveRoom.localParticipant.setMicrophoneEnabled(
+          true,
+          { deviceId: microphoneSelection.selectedMicrophoneId },
+        );
+      } else {
+        await liveRoom.localParticipant.setMicrophoneEnabled(true);
+      }
       refreshParticipants();
       setState((current) => ({
         ...current,
@@ -290,6 +304,8 @@ export function useVoiceSession(adapter: ClientAdapter) {
     adapter,
     disconnectCurrent,
     removeAudio,
+    microphoneSelection.refreshMicrophones,
+    microphoneSelection.selectedMicrophoneId,
     state.roomKey,
     state.status,
     stopMicrophonePreview,
@@ -312,6 +328,59 @@ export function useVoiceSession(adapter: ClientAdapter) {
     }
   }, [disconnectCurrent, state.muted, state.status]);
 
+  const selectMicrophone = useCallback(async (deviceId: string) => {
+    if (
+      deviceId === microphoneSelection.selectedMicrophoneId
+      || microphoneSwitchInFlight.current
+      || state.status === 'checking'
+      || state.status === 'connecting'
+      || state.status === 'reconnecting'
+    ) {
+      return;
+    }
+
+    const current = roomRef.current;
+    if (!current || state.status !== 'connected') {
+      microphoneSelection.selectMicrophone(deviceId);
+      return;
+    }
+
+    microphoneSwitchInFlight.current = true;
+    setState((previous) => ({
+      ...previous,
+      switchingMicrophone: true,
+      errorCode: '',
+    }));
+    try {
+      await current.switchActiveDevice('audioinput', deviceId || 'default');
+      if (roomRef.current !== current) return;
+      microphoneSelection.selectMicrophone(deviceId);
+      const selected = microphoneSelection.microphones.find(
+        (microphone) => microphone.id === deviceId,
+      );
+      setState((previous) => ({
+        ...previous,
+        switchingMicrophone: false,
+        microphoneName: selected?.label ?? '',
+        errorCode: '',
+      }));
+    } catch (reason) {
+      if (roomRef.current !== current) return;
+      setState((previous) => ({
+        ...previous,
+        switchingMicrophone: false,
+        errorCode: microphoneFailureCode(reason, navigator.userAgent),
+      }));
+    } finally {
+      microphoneSwitchInFlight.current = false;
+    }
+  }, [
+    microphoneSelection.microphones,
+    microphoneSelection.selectMicrophone,
+    microphoneSelection.selectedMicrophoneId,
+    state.status,
+  ]);
+
   useEffect(() => () => {
     generation.current += 1;
     stopMicrophonePreview();
@@ -320,6 +389,9 @@ export function useVoiceSession(adapter: ClientAdapter) {
 
   return {
     ...state,
+    microphones: microphoneSelection.microphones,
+    selectedMicrophoneId: microphoneSelection.selectedMicrophoneId,
+    selectMicrophone,
     join,
     leave,
     toggleMute,

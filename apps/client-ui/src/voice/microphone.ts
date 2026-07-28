@@ -3,7 +3,13 @@ import { ClientBridgeError } from '../domain';
 const previewDurationMs = 800;
 const levelIntervalMs = 60;
 
+export interface MicrophoneDevice {
+  id: string;
+  label: string;
+}
+
 interface MicrophonePreviewOptions {
+  deviceId: string;
   signal: AbortSignal;
   onReady: (name: string) => void;
   onLevel: (level: number) => void;
@@ -32,6 +38,9 @@ export function microphoneFailureCode(reason: unknown, userAgent: string): strin
     case 'NotFoundError':
     case 'DevicesNotFoundError':
       return 'voiceMicrophoneMissing';
+    case 'OverconstrainedError':
+    case 'ConstraintNotSatisfiedError':
+      return 'voiceMicrophoneSelectionMissing';
     case 'AbortError':
     case 'NotReadableError':
     case 'TrackStartError':
@@ -42,6 +51,21 @@ export function microphoneFailureCode(reason: unknown, userAgent: string): strin
     default:
       return 'voiceMicrophoneUnavailable';
   }
+}
+
+export async function listMicrophones(): Promise<MicrophoneDevice[]> {
+  if (!navigator.mediaDevices?.enumerateDevices) return [];
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices
+    .filter((device) => (
+      device.kind === 'audioinput'
+      && device.deviceId
+      && device.deviceId !== 'default'
+    ))
+    .map((device) => ({
+      id: device.deviceId,
+      label: device.label.trim(),
+    }));
 }
 
 async function sampleInputLevel(
@@ -113,6 +137,7 @@ async function sampleInputLevel(
 }
 
 export async function previewMicrophone({
+  deviceId,
   signal,
   onReady,
   onLevel,
@@ -127,7 +152,7 @@ export async function previewMicrophone({
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: deviceId ? { deviceId: { exact: deviceId } } : true,
       video: false,
     });
   } catch (reason) {
