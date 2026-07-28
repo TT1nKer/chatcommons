@@ -1,0 +1,6 @@
+interface:
+  display_name: "Develop ChatCommons Client"
+  short_description: "Build client changes within trusted architecture boundaries"
+  default_prompt: "Use $develop-chatcommons-client to implement this client change within the documented trust boundaries."
+policy:
+  allow_implicit_invocation: true
