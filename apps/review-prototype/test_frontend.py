@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -33,16 +34,16 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         html = (PUBLIC / "index.html").read_text()
         localization = (PUBLIC / "i18n.js").read_text()
         application = (PUBLIC / "app.js").read_text()
+        release_manifest = json.loads((PUBLIC / "version.json").read_text())
         self.assertIn("让社区聊天不再被单一平台锁住。", html)
         self.assertIn("Community chat without platform lock-in", html)
         self.assertIn('data-action="copy-brief"', html)
-        version = (ROOT / "VERSION").read_text().strip()
         self.assertIn(
-            f"./downloads/ChatCommons-alpha-{version}-macOS-arm64.zip",
+            f"./downloads/ChatCommons-alpha-{release_manifest['downloads']['macos']}-macOS-arm64.zip",
             html,
         )
         self.assertIn(
-            f"./downloads/ChatCommons-alpha-{version}-Windows-x64.zip",
+            f"./downloads/ChatCommons-alpha-{release_manifest['downloads']['windows']}-Windows-x64.zip",
             html,
         )
         self.assertIn("data-review-only", html)

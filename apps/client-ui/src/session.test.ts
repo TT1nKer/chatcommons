@@ -18,6 +18,7 @@ const snapshot: ClientSnapshot = {
     name: 'A',
     symbol: 'A',
     accent: 'coral',
+    canInvite: true,
     summary: '',
     roomSummary: '',
     unread: 0,

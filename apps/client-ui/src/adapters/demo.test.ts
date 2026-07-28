@@ -30,6 +30,8 @@ describe('DemoAdapter', () => {
     const adapter = new DemoAdapter();
     expect((await adapter.sync()).mode).toBe('demo');
     expect((await adapter.joinCommunity('cc1_demo')).communities).toHaveLength(3);
+    expect((await adapter.createInvitation({ communityId: 'weekend' })).code)
+      .toContain('cc1_');
     expect(await adapter.feedbackStatus()).toBeNull();
     expect((await adapter.submitFeedback({
       whatHappened: 'A',

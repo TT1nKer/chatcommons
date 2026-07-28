@@ -44,5 +44,9 @@ describe('client localization', () => {
       .toContain('系统默认设备');
     expect(copyFor('en').errorMessage('voiceMicrophoneSelectionMissing'))
       .toContain('system default');
+    expect(copyFor('zh-CN').createInviteTitle).toBe('邀请一个朋友');
+    expect(copyFor('en').createInviteTitle).toBe('Invite one friend');
+    expect(copyFor('zh-CN').errorMessage('inviteServerUnavailable')).toContain('社区服务器');
+    expect(copyFor('en').errorMessage('invitePublish')).toContain('published');
   });
 });

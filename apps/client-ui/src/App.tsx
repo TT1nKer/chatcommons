@@ -18,9 +18,13 @@ import type {
   Screen,
 } from './domain';
 import { clientFailureCode } from './domain';
-import { DialogFrame } from './components/DialogFrame';
 import { FeedbackFlow } from './feedback/FeedbackFlow';
 import { copyFor, otherLocale } from './i18n';
+import {
+  CreateInvitationDialog,
+  JoinCommunityDialog,
+} from './invitation/InvitationDialogs';
+import { useInvitationFlow } from './invitation/useInvitationFlow';
 import {
   initialSessionState,
   roomKey,
@@ -128,6 +132,7 @@ export function App({ adapter }: AppProps) {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(''), 2400);
   }, []);
+  const invitation = useInvitationFlow(adapter, copy, announce);
 
   const adoptSnapshot = useCallback((next: ClientSnapshot) => {
     dispatchSession({ type: 'adoptSnapshot', snapshot: next });
@@ -475,6 +480,15 @@ export function App({ adapter }: AppProps) {
                 <i aria-hidden="true" />
                 <span>{copy.connection(snapshot.connection.status)}</span>
               </span>
+              {screen === 'community' && community?.canInvite && (
+                <button
+                  className="context-invite"
+                  type="button"
+                  onClick={() => invitation.open(community)}
+                >
+                  {copy.invite}
+                </button>
+              )}
               <button
                 className="icon-control"
                 type="button"
@@ -507,7 +521,7 @@ export function App({ adapter }: AppProps) {
                   communities={snapshot.communities}
                   onCommunity={openCommunity}
                   onJoin={() => setDialog('join')}
-                  onPendingAction={() => announce(copy.notConnectedYet)}
+                  onInvite={invitation.open}
                 />
               ) : (
                 <EmptyState
@@ -544,7 +558,7 @@ export function App({ adapter }: AppProps) {
       </div>
 
       {dialog === 'join' && (
-        <JoinDialog
+        <JoinCommunityDialog
           copy={copy}
           inviteCode={inviteCode}
           joining={joining}
@@ -552,6 +566,19 @@ export function App({ adapter }: AppProps) {
           onInviteCode={setInviteCode}
           onClose={() => setDialog(null)}
           onSubmit={joinCommunity}
+        />
+      )}
+
+      {invitation.community && (
+        <CreateInvitationDialog
+          copy={copy}
+          communityName={invitation.community.name}
+          invitationCode={invitation.code}
+          creating={invitation.creating}
+          notice={invitation.notice}
+          onCreate={() => void invitation.create()}
+          onCopy={() => void invitation.copyCode()}
+          onClose={invitation.close}
         />
       )}
 
@@ -673,7 +700,7 @@ interface HomeScreenProps {
   communities: Community[];
   onCommunity: (community: Community) => void;
   onJoin: () => void;
-  onPendingAction: () => void;
+  onInvite: (community: Community) => void;
 }
 
 function HomeScreen({
@@ -682,8 +709,10 @@ function HomeScreen({
   communities,
   onCommunity,
   onJoin,
-  onPendingAction,
+  onInvite,
 }: HomeScreenProps) {
+  const invitableCommunity = communities.find((item) => item.canInvite);
+
   return (
     <section className="now-screen" aria-labelledby="home-title">
       <header className="now-heading">
@@ -723,11 +752,17 @@ function HomeScreen({
                 </div>
               </div>
             )}
-            <button type="button" onClick={onPendingAction}>
-              <span className="activity-mark">＋</span>
-              <span><strong>{copy.inviteFriend}</strong><small>{copy.onePersonOnly}</small></span>
-              <time>{copy.createInvite}</time>
-            </button>
+            {invitableCommunity && (
+              <button
+                className="invite-action"
+                type="button"
+                onClick={() => onInvite(invitableCommunity)}
+              >
+                <span className="activity-mark">＋</span>
+                <span><strong>{copy.inviteFriend}</strong><small>{copy.onePersonOnly}</small></span>
+                <time>{copy.createInvite}</time>
+              </button>
+            )}
           </div>
         </section>
 
@@ -959,52 +994,5 @@ function EmptyState({
       </div>
       <small>{copy.localIdentity} · {profileId.slice(0, 10)}</small>
     </section>
-  );
-}
-
-function JoinDialog({
-  copy,
-  inviteCode,
-  joining,
-  notice,
-  onInviteCode,
-  onClose,
-  onSubmit,
-}: {
-  copy: AppCopy;
-  inviteCode: string;
-  joining: boolean;
-  notice: string;
-  onInviteCode: (value: string) => void;
-  onClose: () => void;
-  onSubmit: (event: FormEvent) => void;
-}) {
-  return (
-    <DialogFrame title={copy.joinCommunity} closeLabel={copy.close} onClose={onClose}>
-      <form className="dialog-form" onSubmit={onSubmit}>
-        <div className="dialog-scroll">
-          <p>{copy.joinLead}</p>
-          <label>
-            <span>{copy.onePersonInvite}</span>
-            <textarea
-              rows={7}
-              value={inviteCode}
-              placeholder="cc1_…"
-              spellCheck={false}
-              autoFocus
-              onChange={(event) => onInviteCode(event.target.value)}
-            />
-          </label>
-          <small>{copy.invitePrivacy}</small>
-          {notice && <p className="dialog-notice" role="alert">{notice}</p>}
-        </div>
-        <footer>
-          <button className="secondary-action" type="button" onClick={onClose}>{copy.cancel}</button>
-          <button className="primary-action" type="submit" disabled={joining || !inviteCode.trim()}>
-            {joining ? copy.joining : copy.joinAction}
-          </button>
-        </footer>
-      </form>
-    </DialogFrame>
   );
 }

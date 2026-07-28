@@ -1,8 +1,10 @@
 import type {
   ClientAdapter,
   ClientSnapshot,
+  CreateInvitationInput,
   FeedbackInput,
   FeedbackStatus,
+  Invitation,
   Message,
   SendMessageInput,
   VoiceGrant,
@@ -25,6 +27,7 @@ const snapshot: ClientSnapshot = {
       name: '周末游戏组',
       symbol: '周',
       accent: 'coral',
+      canInvite: true,
       summary: '今晚八点还是九点？',
       roomSummary: '闲聊 · 阿岚刚刚',
       unread: 3,
@@ -40,6 +43,7 @@ const snapshot: ClientSnapshot = {
       name: '开源小组',
       symbol: '开',
       accent: 'blue',
+      canInvite: true,
       summary: '首页不应该是一排服务器图标',
       roomSummary: '产品讨论 · 小陈 12 分钟前',
       unread: 1,
@@ -51,6 +55,7 @@ const snapshot: ClientSnapshot = {
       name: '家里人',
       symbol: '家',
       accent: 'green',
+      canInvite: true,
       summary: '照片我晚点发到群里',
       roomSummary: '日常 · 昨天',
       unread: 0,
@@ -113,6 +118,10 @@ export class DemoAdapter implements ClientAdapter {
 
   async joinCommunity(_inviteCode: string): Promise<ClientSnapshot> {
     return this.load();
+  }
+
+  async createInvitation(_input: CreateInvitationInput): Promise<Invitation> {
+    return { code: 'cc1_friends_review_invitation' };
   }
 
   async sendMessage(input: SendMessageInput): Promise<Message> {

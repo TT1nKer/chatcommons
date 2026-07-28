@@ -109,6 +109,7 @@ function clientSnapshot(): ClientSnapshot {
       name: 'Community A',
       symbol: 'A',
       accent: 'coral',
+      canInvite: true,
       summary: '',
       roomSummary: 'Room A · Room B',
       unread: 0,
@@ -168,6 +169,7 @@ function createAdapter(
     load: vi.fn().mockResolvedValue(snapshot),
     sync: vi.fn().mockResolvedValue(snapshot),
     joinCommunity: vi.fn().mockResolvedValue(snapshot),
+    createInvitation: vi.fn().mockResolvedValue({ code: 'cc1_test_invitation' }),
     sendMessage: vi.fn(async ({ body }) => sentMessage(body)),
     voiceToken: vi.fn().mockRejectedValue(
       new ClientBridgeError('voiceDesktopOnly', 'voice requires the desktop client'),
@@ -317,6 +319,12 @@ describe('App behavior', () => {
         removeEventListener: microphoneSdk.removeEventListener,
       },
     });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    });
     Object.defineProperty(window, 'AudioContext', {
       configurable: true,
       value: undefined,
@@ -423,6 +431,75 @@ describe('App behavior', () => {
       container.querySelector<HTMLButtonElement>('.tree-rooms button.is-active')
         ?.textContent,
     ).toContain('Room A');
+  });
+
+  it('creates and copies a one-person invitation for an administered community', async () => {
+    const createInvitation = vi.fn().mockResolvedValue({
+      code: 'cc1_private_invitation_for_one_friend',
+    });
+    await render(createAdapter({ createInvitation }));
+
+    click(container.querySelector('.invite-action'));
+    expect(container.querySelector('.client-dialog')?.textContent)
+      .toContain('Invite one friend');
+    click(container.querySelector('.invitation-dialog .primary-action'));
+    await settle();
+
+    expect(createInvitation).toHaveBeenCalledWith({ communityId: 'community-a' });
+    expect(container.querySelector('.invitation-result')?.textContent)
+      .toContain('Invite ready');
+
+    click(container.querySelector('.invitation-dialog .primary-action'));
+    await settle();
+    expect(navigator.clipboard.writeText)
+      .toHaveBeenCalledWith('cc1_private_invitation_for_one_friend');
+  });
+
+  it('does not expose invitation controls to a regular member', async () => {
+    const snapshot = clientSnapshot();
+    snapshot.communities[0].canInvite = false;
+    await render(createAdapter({
+      load: vi.fn().mockResolvedValue(snapshot),
+      sync: vi.fn().mockResolvedValue(snapshot),
+    }));
+
+    expect(container.querySelector('.invite-action')).toBeNull();
+    click(container.querySelector('.recent-list button'));
+    expect(container.querySelector('.context-invite')).toBeNull();
+  });
+
+  it('explains when the Home Server cannot create an invitation', async () => {
+    await render(createAdapter({
+      createInvitation: vi.fn().mockRejectedValue(
+        new ClientBridgeError('inviteServerUnavailable', 'offline'),
+      ),
+    }));
+
+    click(container.querySelector('.invite-action'));
+    click(container.querySelector('.invitation-dialog .primary-action'));
+    await settle();
+
+    expect(container.querySelector('.dialog-notice')?.textContent)
+      .toContain('Community Home Server is unavailable');
+  });
+
+  it('ignores an invitation result after its dialog was closed and reopened', async () => {
+    const pendingInvitation = deferred<{ code: string }>();
+    await render(createAdapter({
+      createInvitation: vi.fn(() => pendingInvitation.promise),
+    }));
+
+    click(container.querySelector('.invite-action'));
+    click(container.querySelector('.invitation-dialog .primary-action'));
+    click(container.querySelector('.client-dialog > header button'));
+    click(container.querySelector('.invite-action'));
+
+    await act(async () => {
+      pendingInvitation.resolve({ code: 'cc1_stale_invitation' });
+      await pendingInvitation.promise;
+    });
+
+    expect(container.querySelector('.invitation-result')).toBeNull();
   });
 
   it('polls without overlap and renders a newly synchronized message', async () => {

@@ -13,6 +13,7 @@ export interface Community {
   name: string;
   symbol: string;
   accent: 'coral' | 'blue' | 'green';
+  canInvite: boolean;
   summary: string;
   roomSummary: string;
   unread: number;
@@ -47,6 +48,14 @@ export interface SendMessageInput {
   communityId: string;
   roomId: string;
   body: string;
+}
+
+export interface CreateInvitationInput {
+  communityId: string;
+}
+
+export interface Invitation {
+  code: string;
 }
 
 export interface VoiceTokenInput {
@@ -97,6 +106,7 @@ export interface ClientAdapter {
   load(): Promise<ClientSnapshot>;
   sync(): Promise<ClientSnapshot>;
   joinCommunity(inviteCode: string): Promise<ClientSnapshot>;
+  createInvitation(input: CreateInvitationInput): Promise<Invitation>;
   sendMessage(input: SendMessageInput): Promise<Message>;
   voiceToken(input: VoiceTokenInput): Promise<VoiceGrant>;
   submitFeedback(input: FeedbackInput): Promise<FeedbackStatus>;

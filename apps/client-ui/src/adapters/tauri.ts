@@ -1,8 +1,10 @@
 import type {
   ClientAdapter,
   ClientSnapshot,
+  CreateInvitationInput,
   FeedbackInput,
   FeedbackStatus,
+  Invitation,
   Message,
   SendMessageInput,
   VoiceGrant,
@@ -66,6 +68,10 @@ export class TauriAdapter implements ClientAdapter {
 
   joinCommunity(inviteCode: string): Promise<ClientSnapshot> {
     return call<ClientSnapshot>('join_community', { inviteCode });
+  }
+
+  createInvitation(input: CreateInvitationInput): Promise<Invitation> {
+    return call<Invitation>('create_invitation', { input });
   }
 
   sendMessage(input: SendMessageInput): Promise<Message> {

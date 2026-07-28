@@ -115,6 +115,17 @@ fn signed_channel_and_message_commands_persist_and_filter() -> Result<(), Box<dy
     let joined: Value = serde_json::from_slice(&joined.stdout)?;
     assert_eq!(joined[0], community);
 
+    let community_info = success(&[
+        "community-info",
+        "--state",
+        &owner,
+        "--community",
+        &community,
+    ])?;
+    let community_info: Value = serde_json::from_slice(&community_info.stdout)?;
+    assert_eq!(community_info["communityId"], community);
+    assert_eq!(community_info["canInvite"], true);
+
     let channels = success(&[
         "list-channels",
         "--state",

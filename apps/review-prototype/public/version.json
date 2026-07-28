@@ -1,6 +1,10 @@
 {
-  "productVersion": "0.1.0-alpha.7",
+  "productVersion": "0.1.0-alpha.8",
   "channel": "alpha",
+  "downloads": {
+    "macos": "0.1.0-alpha.8",
+    "windows": "0.1.0-alpha.7"
+  },
   "coreProtocolVersion": 2,
   "chatProfile": "chatcommons.chat.v2"
 }

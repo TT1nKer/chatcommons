@@ -21,6 +21,7 @@ const SYNC_PROCESS_TIMEOUT: Duration = Duration::from_secs(7);
 const JOIN_OVERALL_TIMEOUT_MS: &str = "15000";
 const JOIN_PROCESS_TIMEOUT: Duration = Duration::from_secs(17);
 const MESSAGE_PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
+const INVITATION_PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
 const VOICE_TOKEN_OVERALL_TIMEOUT_MS: &str = "8000";
 const VOICE_TOKEN_PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_VOICE_TOKEN_BYTES: usize = 16 * 1024;
@@ -159,6 +160,14 @@ impl RuntimeState {
             })
         })
         .await
+    }
+
+    pub async fn create_invitation(
+        &self,
+        input: CreateInvitationInput,
+    ) -> Result<ClientInvitation, ClientError> {
+        self.run_serialized(move |paths| create_ready_invitation(paths, input))
+            .await
     }
 
     pub async fn voice_token(&self, input: VoiceTokenInput) -> Result<VoiceGrant, ClientError> {
@@ -312,6 +321,7 @@ struct ClientCommunity {
     name: String,
     symbol: String,
     accent: &'static str,
+    can_invite: bool,
     summary: String,
     room_summary: String,
     unread: u32,
@@ -337,6 +347,18 @@ pub struct ClientMessage {
     sent_at: String,
     body: String,
     own: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateInvitationInput {
+    community_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientInvitation {
+    code: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -415,6 +437,8 @@ struct StoredMessage {
 struct CommunityInfo {
     community_id: String,
     name: String,
+    #[serde(default)]
+    can_invite: bool,
 }
 
 struct IdentityInfo {
@@ -513,6 +537,51 @@ fn synchronize_with_home_server(paths: &Paths) -> Result<(), ClientError> {
         SYNC_PROCESS_TIMEOUT,
     )
     .map(|_| ())
+}
+
+fn create_ready_invitation(
+    paths: &Paths,
+    input: CreateInvitationInput,
+) -> Result<ClientInvitation, ClientError> {
+    let config = load_config(&paths.config)?;
+    let Some(configured_community) = config.community_id else {
+        return Err(ClientError::new(
+            "communityMissing",
+            "no community is configured",
+        ));
+    };
+    if configured_community != input.community_id {
+        return Err(ClientError::new(
+            "communityMismatch",
+            "the selected community is not configured locally",
+        ));
+    }
+
+    synchronize_with_home_server(paths).map_err(|_| {
+        ClientError::new(
+            "inviteServerUnavailable",
+            "the Community Home Server must be reachable before creating an invite",
+        )
+    })?;
+    let output = run_node_with_timeout(
+        paths,
+        &[
+            "create-invite",
+            "--state",
+            path_text(&paths.state)?,
+            "--community",
+            &input.community_id,
+        ],
+        INVITATION_PROCESS_TIMEOUT,
+    )?;
+    let code = output_field(&output, "INVITE_CODE")?;
+    synchronize_with_home_server(paths).map_err(|_| {
+        ClientError::new(
+            "invitePublish",
+            "the signed invite was not published to the Community Home Server",
+        )
+    })?;
+    Ok(ClientInvitation { code })
 }
 
 fn load_snapshot(
@@ -655,6 +724,7 @@ fn load_snapshot(
             name: community_info.name,
             symbol,
             accent: "coral",
+            can_invite: community_info.can_invite,
             summary,
             room_summary,
             unread: 0,
@@ -1415,6 +1485,102 @@ esac
         );
         assert!(!fs::read_to_string(arguments_path)?.contains("message that must not enter argv"));
         assert_eq!(fs::read(stdin_path)?, secret);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invitation_is_returned_only_after_two_successful_server_syncs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir()?;
+        let community_id = "ab".repeat(32);
+        let config = temporary.path().join("client.json");
+        save_config(&config, Some(community_id.clone())).map_err(|error| error.detail)?;
+        let executable = temporary.path().join("fake-node");
+        let calls = temporary.path().join("calls");
+        fs::write(
+            &executable,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$1" >> '{}'
+case "$1" in
+  sync-home-server)
+    printf 'SYNCHRONIZED=1\n'
+    ;;
+  create-invite)
+    printf 'INVITE_CODE=cc1_private_test_invite\n'
+    ;;
+  *)
+    exit 9
+    ;;
+esac
+"#,
+                calls.display(),
+            ),
+        )?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        let paths = Paths {
+            state: temporary.path().join("state"),
+            config,
+            feedback: temporary.path().join("feedback.json"),
+            node: executable,
+        };
+
+        let invitation = create_ready_invitation(
+            &paths,
+            CreateInvitationInput {
+                community_id: community_id.clone(),
+            },
+        )
+        .map_err(|error| error.detail)?;
+
+        assert_eq!(invitation.code, "cc1_private_test_invite");
+        assert_eq!(
+            fs::read_to_string(calls)?.lines().collect::<Vec<_>>(),
+            ["sync-home-server", "create-invite", "sync-home-server"]
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unavailable_server_prevents_local_invitation_creation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir()?;
+        let community_id = "ab".repeat(32);
+        let config = temporary.path().join("client.json");
+        save_config(&config, Some(community_id.clone())).map_err(|error| error.detail)?;
+        let executable = temporary.path().join("fake-node");
+        let calls = temporary.path().join("calls");
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\nexit 1\n",
+                calls.display(),
+            ),
+        )?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        let paths = Paths {
+            state: temporary.path().join("state"),
+            config,
+            feedback: temporary.path().join("feedback.json"),
+            node: executable,
+        };
+
+        let error = create_ready_invitation(
+            &paths,
+            CreateInvitationInput {
+                community_id: community_id.clone(),
+            },
+        )
+        .expect_err("offline servers must reject invite creation");
+
+        assert_eq!(error.code, "inviteServerUnavailable");
+        assert_eq!(fs::read_to_string(calls)?.trim(), "sync-home-server");
         Ok(())
     }
 

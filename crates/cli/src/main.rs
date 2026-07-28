@@ -377,6 +377,7 @@ struct MessageView {
 struct CommunityInfoView {
     community_id: String,
     name: String,
+    can_invite: bool,
 }
 
 fn command_list_joined_communities(options: &Options) -> Result<(), CliError> {
@@ -406,6 +407,9 @@ fn command_community_info(options: &Options) -> Result<(), CliError> {
     let core = open_community(&state, community)?;
     let events = core.all_events()?;
     let resolution = resolve(&events)?;
+    let user_id = state.user().user_id();
+    let can_invite = resolution.snapshot.owner.as_ref() == Some(&user_id)
+        || resolution.snapshot.administrators.contains(&user_id);
     let accepted = resolution.snapshot.event_ids;
     let name = events
         .iter()
@@ -420,6 +424,7 @@ fn command_community_info(options: &Options) -> Result<(), CliError> {
         serde_json::to_string(&CommunityInfoView {
             community_id: hex::encode(community.as_bytes()),
             name,
+            can_invite,
         })?
     );
     io::stdout().flush()?;

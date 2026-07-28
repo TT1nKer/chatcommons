@@ -220,3 +220,15 @@ See [`ADR 0025`](adr/0025-authorized-community-voice.md).
 
 Browser review and desktop packaging must render the same client component
 source. See [`ADR 0024`](adr/0024-single-client-ui-source.md).
+
+## M4c — client-created invitations and conversation-first visual pass (implemented locally)
+
+- owner/administrator invitation capability derived from resolved protocol state
+- Home Server reachability required before creating a single-use invitation
+- invitation code returned only after the signed event is published
+- one explicit private-copy flow in the shared Chinese/English client
+- current-community rooms only, human-scale typography and centered conversation
+- no contacts, public join requests, reusable invitations, short links or deep links
+
+See
+[`ADR 0026`](adr/0026-client-created-single-use-invitations.md).
