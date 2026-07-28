@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import plistlib
 import re
 import unittest
 from pathlib import Path
@@ -14,11 +15,17 @@ class FrontendLocalizationContractTest(unittest.TestCase):
     def test_product_version_is_consistent_across_workspace_and_prototype(self):
         version = (ROOT / "VERSION").read_text().strip()
         cargo = (ROOT / "Cargo.toml").read_text()
+        macos_plist = plistlib.loads(
+            (ROOT / "apps/desktop/packaging/Info.plist").read_bytes()
+        )
         html = (PUBLIC / "index.html").read_text()
         manifest = (PUBLIC / "version.json").read_text()
         cargo_version = re.search(r'^version = "([^"]+)"$', cargo, re.MULTILINE)
+        alpha_build = re.search(r"alpha\.(\d+)$", version)
         self.assertIsNotNone(cargo_version)
+        self.assertIsNotNone(alpha_build)
         self.assertEqual(version, cargo_version.group(1))
+        self.assertEqual(macos_plist["CFBundleVersion"], alpha_build.group(1))
         self.assertIn(f"v{version}", html)
         self.assertIn(f'"productVersion": "{version}"', manifest)
 
