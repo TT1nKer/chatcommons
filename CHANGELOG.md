@@ -6,6 +6,22 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] - 2026-07-28
+
+### Added
+
+- A local microphone preflight before voice authorization, with the detected
+  input name and a short live input-level meter.
+- Separate Chinese and English recovery guidance for denied macOS and Windows
+  microphone permissions, missing devices, busy devices and unsupported
+  clients.
+
+### Changed
+
+- Voice authorization is requested only after the local microphone check
+  succeeds. Temporary preview tracks and Web Audio resources are released
+  before the LiveKit session starts or immediately when the user cancels.
+
 ## [0.1.0-alpha.5] - 2026-07-27
 
 ### Added

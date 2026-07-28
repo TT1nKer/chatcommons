@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - all
+          - desktop
           - macos
           - windows
           - linux-server
@@ -55,7 +56,7 @@ jobs:
       - run: cargo test --workspace --all-targets
 
   macos:
-    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'macos'
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'desktop' || inputs.target == 'macos'
     needs: verify
     runs-on: macos-15
     steps:
@@ -94,7 +95,7 @@ jobs:
           if-no-files-found: error
 
   windows:
-    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'windows'
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'desktop' || inputs.target == 'windows'
     needs: verify
     runs-on: windows-2025
     steps:

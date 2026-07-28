@@ -26,5 +26,11 @@ describe('client localization', () => {
     expect(copyFor('en').errorMessage('nodeTimeout')).toContain('took too long');
     expect(copyFor('zh-CN').feedbackTitle).toBe('反馈与问题');
     expect(copyFor('en').feedbackTitle).toBe('Feedback & issues');
+    expect(copyFor('zh-CN').voiceChecking).toContain('检查麦克风');
+    expect(copyFor('en').voiceChecking).toContain('Checking microphone');
+    expect(copyFor('zh-CN').errorMessage('voicePermissionMac')).toContain('隐私与安全性');
+    expect(copyFor('en').errorMessage('voicePermissionWindows')).toContain('Privacy & security');
+    expect(copyFor('zh-CN').errorMessage('voiceMicrophoneMissing')).toContain('没有找到麦克风');
+    expect(copyFor('en').errorMessage('voiceMicrophoneBusy')).toContain('another app');
   });
 });

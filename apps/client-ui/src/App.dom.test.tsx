@@ -18,6 +18,10 @@ const voiceSdk = vi.hoisted(() => ({
   startAudio: vi.fn().mockResolvedValue(undefined),
   setMicrophoneEnabled: vi.fn().mockResolvedValue(undefined),
 }));
+const microphoneSdk = vi.hoisted(() => ({
+  getUserMedia: vi.fn(),
+  stop: vi.fn(),
+}));
 
 vi.mock('livekit-client', () => {
   class TestRoom {
@@ -61,6 +65,7 @@ vi.mock('livekit-client', () => {
 });
 
 import { App } from './App';
+import { microphoneFailureCode } from './voice/microphone';
 import {
   ClientBridgeError,
   type ClientAdapter,
@@ -243,6 +248,23 @@ describe('App behavior', () => {
     Object.defineProperty(window, 'scrollTo', {
       configurable: true,
       value: vi.fn(),
+    });
+    const microphoneTrack = {
+      label: 'Test microphone',
+      stop: microphoneSdk.stop,
+    } as unknown as MediaStreamTrack;
+    const microphoneStream = {
+      getAudioTracks: () => [microphoneTrack],
+      getTracks: () => [microphoneTrack],
+    } as unknown as MediaStream;
+    microphoneSdk.getUserMedia.mockResolvedValue(microphoneStream);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: microphoneSdk.getUserMedia },
+    });
+    Object.defineProperty(window, 'AudioContext', {
+      configurable: true,
+      value: undefined,
     });
     container = document.createElement('div');
     document.body.append(container);
@@ -456,7 +478,29 @@ describe('App behavior', () => {
     expect(submitted[0].screen).toBe('home');
   });
 
-  it('opens the microphone only after receiving a valid voice grant', async () => {
+  it('checks and releases the microphone before requesting a voice grant', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, 'AudioContext', {
+      configurable: true,
+      value: class {
+        state = 'running';
+
+        createMediaStreamSource() {
+          return { connect: vi.fn() };
+        }
+
+        createAnalyser() {
+          return {
+            fftSize: 0,
+            getByteTimeDomainData: (samples: Uint8Array) => samples.fill(192),
+          };
+        }
+
+        close = vi.fn().mockResolvedValue(undefined);
+
+        resume = vi.fn().mockResolvedValue(undefined);
+      },
+    });
     const voiceToken = vi.fn().mockResolvedValue({
       serverUrl: 'wss://voice.example.test',
       participantToken: 'signed-participant-token',
@@ -469,10 +513,26 @@ describe('App behavior', () => {
     await settle();
     await settle();
 
+    expect(container.querySelector('.voice-dock')?.textContent)
+      .toContain('Listening to Test microphone');
+    expect(voiceToken).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    await settle();
+    await settle();
+
     expect(voiceToken).toHaveBeenCalledWith({
       communityId: 'community-a',
       roomId: 'room-a',
     });
+    expect(microphoneSdk.getUserMedia).toHaveBeenCalledWith({
+      audio: true,
+      video: false,
+    });
+    expect(microphoneSdk.getUserMedia.mock.invocationCallOrder[0])
+      .toBeLessThan(voiceToken.mock.invocationCallOrder[0]);
+    expect(microphoneSdk.stop).toHaveBeenCalledOnce();
     expect(voiceSdk.connect).toHaveBeenCalledWith(
       'wss://voice.example.test',
       'signed-participant-token',
@@ -485,6 +545,38 @@ describe('App behavior', () => {
     click(container.querySelector('.voice-leave'));
     expect(voiceSdk.disconnect).toHaveBeenCalled();
     expect(container.querySelector('.voice-dock')).toBeNull();
+  });
+
+  it('does not request a voice grant when no microphone is available', async () => {
+    const voiceToken = vi.fn();
+    microphoneSdk.getUserMedia.mockRejectedValue(
+      new DOMException('No input device', 'NotFoundError'),
+    );
+    await render(createAdapter({ kind: 'tauri', voiceToken }));
+
+    click(roomButton(container, 'Room A'));
+    click(container.querySelector('.voice-join'));
+    await settle();
+    await settle();
+
+    expect(voiceToken).not.toHaveBeenCalled();
+    expect(container.querySelector('.voice-dock')?.textContent)
+      .toContain('No microphone was found');
+  });
+
+  it('classifies platform permission and device startup failures', () => {
+    expect(microphoneFailureCode(
+      { name: 'NotAllowedError' },
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X)',
+    )).toBe('voicePermissionMac');
+    expect(microphoneFailureCode(
+      { name: 'NotAllowedError' },
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+    )).toBe('voicePermissionWindows');
+    expect(microphoneFailureCode(
+      { name: 'NotReadableError' },
+      'Mozilla/5.0',
+    )).toBe('voiceMicrophoneBusy');
   });
 
   it('does not let an older status request hide a new feedback receipt', async () => {

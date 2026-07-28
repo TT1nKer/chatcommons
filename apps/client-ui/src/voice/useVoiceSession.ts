@@ -15,12 +15,14 @@ import {
   type ClientAdapter,
   type VoiceGrant,
 } from '../domain';
+import { previewMicrophone } from './microphone';
 
 const minimumTokenLifetimeMs = 5_000;
 const maximumTokenBytes = 16 * 1024;
 
 export type VoiceStatus =
   | 'idle'
+  | 'checking'
   | 'connecting'
   | 'connected'
   | 'reconnecting'
@@ -39,6 +41,8 @@ interface VoiceSessionState {
   roomKey: string;
   roomName: string;
   muted: boolean;
+  microphoneName: string;
+  microphoneLevel: number;
   participants: VoiceParticipant[];
   errorCode: string;
 }
@@ -48,6 +52,8 @@ const initialState: VoiceSessionState = {
   roomKey: '',
   roomName: '',
   muted: false,
+  microphoneName: '',
+  microphoneLevel: 0,
   participants: [],
   errorCode: '',
 };
@@ -90,6 +96,7 @@ export function useVoiceSession(adapter: ClientAdapter) {
   const [state, setState] = useState<VoiceSessionState>(initialState);
   const roomRef = useRef<LiveKitRoom | null>(null);
   const audioElements = useRef(new Set<HTMLMediaElement>());
+  const previewAbort = useRef<AbortController | null>(null);
   const generation = useRef(0);
 
   const removeAudio = useCallback(() => {
@@ -110,11 +117,17 @@ export function useVoiceSession(adapter: ClientAdapter) {
     removeAudio();
   }, [removeAudio]);
 
+  const stopMicrophonePreview = useCallback(() => {
+    previewAbort.current?.abort();
+    previewAbort.current = null;
+  }, []);
+
   const leave = useCallback(() => {
     generation.current += 1;
+    stopMicrophonePreview();
     disconnectCurrent();
     setState(initialState);
-  }, [disconnectCurrent]);
+  }, [disconnectCurrent, stopMicrophonePreview]);
 
   const join = useCallback(async ({
     communityId,
@@ -128,22 +141,59 @@ export function useVoiceSession(adapter: ClientAdapter) {
     const nextRoomKey = `${communityId}:${roomId}`;
     if (
       state.roomKey === nextRoomKey
-      && (state.status === 'connecting' || state.status === 'connected')
+      && (
+        state.status === 'checking'
+        || state.status === 'connecting'
+        || state.status === 'connected'
+        || state.status === 'reconnecting'
+      )
     ) {
       return;
     }
 
     const attempt = generation.current + 1;
     generation.current = attempt;
+    stopMicrophonePreview();
     disconnectCurrent();
     setState({
       ...initialState,
-      status: 'connecting',
+      status: 'checking',
       roomKey: nextRoomKey,
       roomName,
     });
 
     try {
+      const abortController = new AbortController();
+      previewAbort.current = abortController;
+      let microphoneReady = false;
+      try {
+        microphoneReady = await previewMicrophone({
+          signal: abortController.signal,
+          onReady: (microphoneName) => {
+            if (generation.current !== attempt) return;
+            setState((current) => ({
+              ...current,
+              microphoneName,
+              microphoneLevel: 0,
+            }));
+          },
+          onLevel: (microphoneLevel) => {
+            if (generation.current !== attempt) return;
+            setState((current) => ({ ...current, microphoneLevel }));
+          },
+        });
+      } finally {
+        if (previewAbort.current === abortController) {
+          previewAbort.current = null;
+        }
+      }
+      if (!microphoneReady || generation.current !== attempt) return;
+      setState((current) => ({
+        ...current,
+        status: 'connecting',
+        microphoneLevel: 0,
+      }));
+
       const grant = await adapter.voiceToken({ communityId, roomId });
       validateGrant(grant);
       if (generation.current !== attempt) return;
@@ -228,6 +278,7 @@ export function useVoiceSession(adapter: ClientAdapter) {
     } catch (reason) {
       if (generation.current !== attempt) return;
       disconnectCurrent();
+      stopMicrophonePreview();
       const code = clientFailureCode(reason);
       setState((current) => ({
         ...current,
@@ -235,7 +286,14 @@ export function useVoiceSession(adapter: ClientAdapter) {
         errorCode: code === 'unknown' ? 'voiceConnect' : code,
       }));
     }
-  }, [adapter, disconnectCurrent, removeAudio, state.roomKey, state.status]);
+  }, [
+    adapter,
+    disconnectCurrent,
+    removeAudio,
+    state.roomKey,
+    state.status,
+    stopMicrophonePreview,
+  ]);
 
   const toggleMute = useCallback(async () => {
     const current = roomRef.current;
@@ -256,8 +314,9 @@ export function useVoiceSession(adapter: ClientAdapter) {
 
   useEffect(() => () => {
     generation.current += 1;
+    stopMicrophonePreview();
     disconnectCurrent();
-  }, [disconnectCurrent]);
+  }, [disconnectCurrent, stopMicrophonePreview]);
 
   return {
     ...state,

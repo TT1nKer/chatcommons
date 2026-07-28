@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ChatCommons Alpha",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "identifier": "net.ttinker.chatcommons.alpha",
   "build": {
     "frontendDist": "../client-ui/dist"

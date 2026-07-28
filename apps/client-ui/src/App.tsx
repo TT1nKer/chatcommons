@@ -417,13 +417,20 @@ export function App({ adapter }: AppProps) {
                   className={`voice-join is-${voice.status}`}
                   type="button"
                   disabled={
-                    voice.status === 'connecting'
-                    || (voice.status === 'connected' && voice.roomKey === activeRoomKey)
+                    voice.roomKey === activeRoomKey
+                    && (
+                      voice.status === 'checking'
+                      || voice.status === 'connecting'
+                      || voice.status === 'connected'
+                      || voice.status === 'reconnecting'
+                    )
                   }
                   onClick={joinVoice}
                 >
                   <span aria-hidden="true">◖</span>
-                  {voice.status === 'connecting' && voice.roomKey === activeRoomKey
+                  {voice.status === 'checking' && voice.roomKey === activeRoomKey
+                    ? copy.voiceChecking
+                    : voice.status === 'connecting' && voice.roomKey === activeRoomKey
                     ? copy.voiceConnecting
                     : voice.status === 'connected' && voice.roomKey === activeRoomKey
                       ? copy.voiceConnected
@@ -730,6 +737,8 @@ interface CommunityScreenProps {
     roomKey: string;
     roomName: string;
     muted: boolean;
+    microphoneName: string;
+    microphoneLevel: number;
     participants: VoiceParticipant[];
     errorCode: string;
     leave: () => void;
@@ -824,21 +833,30 @@ function VoiceDock({
 }) {
   const statusLabel = {
     idle: '',
+    checking: copy.voiceChecking,
     connecting: copy.voiceConnecting,
     connected: copy.voiceConnected,
     reconnecting: copy.voiceReconnecting,
     error: copy.voiceError,
   }[voice.status];
+  const microphoneName = voice.microphoneName || copy.voiceDefaultMicrophone;
+  const level = Math.max(0.08, voice.microphoneLevel);
 
   return (
     <section className={`voice-dock is-${voice.status}`} aria-label={copy.voiceRoom}>
       <div className="voice-dock-copy">
-        <span className="voice-pulse" aria-hidden="true"><i /><i /><i /></span>
+        <span className="voice-pulse" aria-hidden="true">
+          <i style={voice.status === 'checking' ? { height: `${4 + level * 8}px` } : undefined} />
+          <i style={voice.status === 'checking' ? { height: `${5 + level * 12}px` } : undefined} />
+          <i style={voice.status === 'checking' ? { height: `${4 + level * 9}px` } : undefined} />
+        </span>
         <span>
           <strong>{voice.roomName || copy.voiceRoom}</strong>
           <small>
             {voice.status === 'error'
               ? copy.errorMessage(voice.errorCode)
+              : voice.status === 'checking'
+                ? `${copy.voiceMicrophoneDetected(microphoneName)} · ${statusLabel}`
               : `${statusLabel} · ${copy.voiceParticipants(voice.participants.length)}`}
           </small>
         </span>
@@ -855,17 +873,20 @@ function VoiceDock({
         ))}
       </div>
       <div className="voice-controls">
-        {voice.status !== 'error' && (
+        {voice.status === 'connected' && (
           <button
             type="button"
-            disabled={voice.status !== 'connected'}
             onClick={() => void voice.toggleMute()}
           >
             {voice.muted ? copy.unmute : copy.mute}
           </button>
         )}
         <button className="voice-leave" type="button" onClick={voice.leave}>
-          {voice.status === 'error' ? copy.close : copy.leaveVoice}
+          {voice.status === 'error'
+            ? copy.close
+            : voice.status === 'checking' || voice.status === 'connecting'
+              ? copy.cancel
+              : copy.leaveVoice}
         </button>
       </div>
     </section>
