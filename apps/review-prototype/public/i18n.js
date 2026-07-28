@@ -14,7 +14,7 @@
     '进入客户端界面': 'Open the client interface',
     '下载桌面测试版': 'Download desktop alpha',
     '当前仅开放朋友内测': 'Currently open to invited friends only',
-    '测试资格通过邀请的评审链接发放。本轮 Demo 先提供 Apple 芯片版 macOS 客户端，Windows 版将在下一轮重新构建。': 'Alpha access is shared through invited review links. This Demo build is available for Apple Silicon Macs first; Windows will be rebuilt in the next round.',
+    '测试资格通过邀请的评审链接发放。已受邀的朋友可以选择 macOS 或 Windows 客户端。': 'Alpha access is shared through invited review links. Invited friends can choose the macOS or Windows client.',
     '复制项目简介': 'Copy project brief',
     '项目原则': 'Project principles',
     '像普通群聊一样使用': 'Use it like an ordinary group chat',

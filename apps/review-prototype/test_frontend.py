@@ -41,6 +41,10 @@ class FrontendLocalizationContractTest(unittest.TestCase):
             f"./downloads/ChatCommons-alpha-{version}-macOS-arm64.zip",
             html,
         )
+        self.assertIn(
+            f"./downloads/ChatCommons-alpha-{version}-Windows-x64.zip",
+            html,
+        )
         self.assertIn("data-review-only", html)
         self.assertIn("桌面 alpha 已连接真实签名聊天", html)
         self.assertIn("function openAbout()", application)
@@ -163,6 +167,10 @@ class FrontendLocalizationContractTest(unittest.TestCase):
             "Alpha access is shared through invited review links.", localization
         )
         self.assertIn("Download desktop alpha", localization)
+        self.assertIn(
+            "Invited friends can choose the macOS or Windows client.",
+            localization,
+        )
         self.assertNotIn("data-review-only", application)
         self.assertIn("dataset.reviewAuthorized = 'true'", review)
         self.assertIn('[data-review-only] { display: none !important; }', styles)
