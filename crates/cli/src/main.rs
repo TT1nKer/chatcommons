@@ -76,7 +76,8 @@ Usage:
     [--exit-after-events <count>] [--idle-timeout-ms <milliseconds>]
     [--overall-timeout-ms <milliseconds>]
   chatcommons-node voice-token --state <directory> --community <hex>
-    --channel <hex> [--overall-timeout-ms <milliseconds>]
+    --channel <hex> [--listen <multiaddr>]
+    [--overall-timeout-ms <milliseconds>]
 
 This is a developer tool. Relay-assisted hole punching requires an explicit relay.
 It has no discovery, production relay configuration, or GUI.
@@ -87,6 +88,7 @@ const MAX_CHANNEL_NAME_BYTES: usize = 80;
 const MAX_MESSAGE_BYTES: usize = 4_000;
 const MAX_INVITE_CODE_BYTES: usize = 16 * 1024;
 const MAX_LISTED_MESSAGES: usize = 5_000;
+const DEFAULT_QUIC_LISTEN: &str = "/ip4/0.0.0.0/udp/0/quic-v1";
 
 #[derive(Debug, Error)]
 enum CliError {
@@ -979,12 +981,14 @@ async fn command_voice_token(options: &Options) -> Result<(), CliError> {
         "--state",
         "--community",
         "--channel",
+        "--listen",
         "--overall-timeout-ms",
     ])?;
     let state = NodeState::load(options.require_one("--state")?)?;
     let _lock = state.acquire_lock()?;
     let community = parse_community(options.require_one("--community")?)?;
     let channel_id = parse_hex_32(options.require_one("--channel")?)?;
+    let listen_address = voice_listen_address(options)?;
     let overall_timeout = options
         .optional_one("--overall-timeout-ms")?
         .map(parse_positive_milliseconds)
@@ -1017,7 +1021,7 @@ async fn command_voice_token(options: &Options) -> Result<(), CliError> {
         BTreeSet::from([state.user().user_id()]),
         BTreeSet::from([DeviceId::from_public_key(&home_server.server_public_key)]),
     );
-    network.listen(parse_multiaddr("/ip4/0.0.0.0/udp/0/quic-v1")?)?;
+    network.listen(parse_multiaddr(listen_address)?)?;
     network.dial(peer, address)?;
 
     let deadline = tokio::time::Instant::now() + overall_timeout;
@@ -1542,6 +1546,12 @@ fn parse_dial(options: &Options) -> Result<Option<(PeerId, Multiaddr)>, CliError
     }
 }
 
+fn voice_listen_address<'a>(options: &'a Options) -> Result<&'a str, CliError> {
+    Ok(options
+        .optional_one("--listen")?
+        .unwrap_or(DEFAULT_QUIC_LISTEN))
+}
+
 fn home_server_target(binding: &HomeServerBinding) -> Result<(PeerId, Multiaddr), CliError> {
     let public_key = identity::ed25519::PublicKey::try_from_bytes(&binding.server_public_key)
         .map_err(|_| CliError::InvalidHomeServerPublicKey)?;
@@ -1662,6 +1672,28 @@ mod tests {
             .into_iter(),
         )?;
         assert!(required_text_input(&options, "--text", "text", MAX_MESSAGE_BYTES).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn voice_listen_address_defaults_and_accepts_override() -> Result<(), CliError> {
+        let defaults = Options::parse([].into_iter())?;
+        assert_eq!(
+            voice_listen_address(&defaults)?,
+            "/ip4/0.0.0.0/udp/0/quic-v1"
+        );
+
+        let overridden = Options::parse(
+            [
+                "--listen".to_owned(),
+                "/ip4/192.168.1.39/udp/0/quic-v1".to_owned(),
+            ]
+            .into_iter(),
+        )?;
+        assert_eq!(
+            voice_listen_address(&overridden)?,
+            "/ip4/192.168.1.39/udp/0/quic-v1"
+        );
         Ok(())
     }
 }

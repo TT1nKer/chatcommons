@@ -174,38 +174,7 @@ impl RuntimeState {
 
     pub async fn voice_token(&self, input: VoiceTokenInput) -> Result<VoiceGrant, ClientError> {
         self.run_serialized(move |paths| {
-            let config = load_config(&paths.config)?;
-            let Some(configured_community) = config.community_id else {
-                return Err(ClientError::new(
-                    "communityMissing",
-                    "no community is configured",
-                ));
-            };
-            if configured_community != input.community_id {
-                return Err(ClientError::new(
-                    "communityMismatch",
-                    "the selected community is not configured locally",
-                ));
-            }
-            let output = run_node_with_timeout(
-                paths,
-                &[
-                    "voice-token",
-                    "--state",
-                    path_text(&paths.state)?,
-                    "--community",
-                    &input.community_id,
-                    "--channel",
-                    &input.room_id,
-                    "--overall-timeout-ms",
-                    VOICE_TOKEN_OVERALL_TIMEOUT_MS,
-                ],
-                VOICE_TOKEN_PROCESS_TIMEOUT,
-            )?;
-            let grant: VoiceGrant = serde_json::from_str(&output)
-                .map_err(|error| ClientError::new("voiceGrant", error.to_string()))?;
-            validate_voice_grant(&grant)?;
-            Ok(grant)
+            request_voice_grant_using(paths, &input, &synchronization_listen_addresses())
         })
         .await
     }
@@ -555,6 +524,64 @@ fn synchronize_with_home_server_using(
         ClientError::new(
             "networkPath",
             "no local network path is available for Home Server synchronization",
+        )
+    }))
+}
+
+fn request_voice_grant_using(
+    paths: &Paths,
+    input: &VoiceTokenInput,
+    listen_addresses: &[String],
+) -> Result<VoiceGrant, ClientError> {
+    let config = load_config(&paths.config)?;
+    let Some(configured_community) = config.community_id else {
+        return Err(ClientError::new(
+            "communityMissing",
+            "no community is configured",
+        ));
+    };
+    if configured_community != input.community_id {
+        return Err(ClientError::new(
+            "communityMismatch",
+            "the selected community is not configured locally",
+        ));
+    }
+
+    let mut last_timeout = None;
+    for listen_address in listen_addresses {
+        let output = match run_node_with_timeout(
+            paths,
+            &[
+                "voice-token",
+                "--state",
+                path_text(&paths.state)?,
+                "--community",
+                &input.community_id,
+                "--channel",
+                &input.room_id,
+                "--listen",
+                listen_address,
+                "--overall-timeout-ms",
+                VOICE_TOKEN_OVERALL_TIMEOUT_MS,
+            ],
+            VOICE_TOKEN_PROCESS_TIMEOUT,
+        ) {
+            Ok(output) => output,
+            Err(error) if error.code == "nodeTimeout" => {
+                last_timeout = Some(error);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let grant: VoiceGrant = serde_json::from_str(&output)
+            .map_err(|error| ClientError::new("voiceGrant", error.to_string()))?;
+        validate_voice_grant(&grant)?;
+        return Ok(grant);
+    }
+    Err(last_timeout.unwrap_or_else(|| {
+        ClientError::new(
+            "networkPath",
+            "no local network path is available for voice authorization",
         )
     }))
 }
@@ -937,11 +964,18 @@ fn parse_node_output(output: Output) -> Result<String, ClientError> {
             .map_err(|error| ClientError::new("nodeOutput", error.to_string()))
     } else {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        Err(ClientError::protocol(if detail.is_empty() {
+        let detail = if detail.is_empty() {
             "protocol operation failed"
         } else {
             &detail
-        }))
+        };
+        if detail.contains("HandshakeTimedOut")
+            || detail.contains("network operation reached its overall timeout")
+        {
+            Err(ClientError::new("nodeTimeout", redact_diagnostic(detail)))
+        } else {
+            Err(ClientError::protocol(detail))
+        }
     }
 }
 
@@ -1396,6 +1430,97 @@ mod tests {
                 .code,
             "voiceGrant"
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn voice_grant_falls_back_after_a_scoped_path_fails() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir()?;
+        let community_id = "ab".repeat(32);
+        let room_id = "cd".repeat(32);
+        let config = temporary.path().join("client.json");
+        save_config(&config, Some(community_id.clone())).map_err(|error| error.detail)?;
+        let executable = temporary.path().join("fake-node");
+        let calls = temporary.path().join("calls");
+        let expires_at_ms =
+            i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? + 60_000;
+        fs::write(
+            &executable,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$*" >> '{}'
+case "$*" in
+  *"/ip4/192.168.1.39/udp/0/quic-v1"*)
+    printf 'error: network dial failed: HandshakeTimedOut\n' >&2
+    exit 1
+    ;;
+  *)
+    printf '{{"server_url":"wss://voice.example.test","participant_token":"header.payload.signature","expires_at_ms":{expires_at_ms}}}\n'
+    ;;
+esac
+"#,
+                calls.display(),
+            ),
+        )?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        let paths = Paths {
+            state: temporary.path().join("state"),
+            config,
+            feedback: temporary.path().join("feedback.json"),
+            node: executable,
+        };
+        let listen_addresses = [
+            "/ip4/192.168.1.39/udp/0/quic-v1".to_owned(),
+            "/ip4/0.0.0.0/udp/0/quic-v1".to_owned(),
+        ];
+
+        let grant = request_voice_grant_using(
+            &paths,
+            &VoiceTokenInput {
+                community_id,
+                room_id,
+            },
+            &listen_addresses,
+        )
+        .map_err(|error| error.detail)?;
+
+        assert_eq!(grant.server_url, "wss://voice.example.test");
+        let calls = fs::read_to_string(calls)?;
+        let calls = calls.lines().collect::<Vec<_>>();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].contains(&listen_addresses[0]));
+        assert!(calls[1].contains(&listen_addresses[1]));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn network_handshake_failure_is_reported_as_a_timeout() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir()?;
+        let executable = temporary.path().join("failing-node");
+        fs::write(
+            &executable,
+            "#!/bin/sh\nprintf 'error: network dial failed: HandshakeTimedOut\\n' >&2\nexit 1\n",
+        )?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        let paths = Paths {
+            state: temporary.path().join("state"),
+            config: temporary.path().join("client.json"),
+            feedback: temporary.path().join("feedback.json"),
+            node: executable,
+        };
+
+        let error = run_node_with_timeout(&paths, &[], Duration::from_secs(1))
+            .expect_err("the network handshake should fail");
+
+        assert_eq!(error.code, "nodeTimeout");
         Ok(())
     }
 

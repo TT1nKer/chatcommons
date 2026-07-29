@@ -133,3 +133,84 @@ async fn two_real_quic_swarms_authenticate_and_sync_sqlite()
     assert!(!format!("{received_grant:?}").contains("header.payload.signature"));
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn invalid_quic_handshake_does_not_stop_the_listener()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let server_user = Identity::from_seed([101; 32]);
+    let client_user = Identity::from_seed([102; 32]);
+    let server_device = DeviceIdentity::from_seed([103; 32])?;
+    let client_device = DeviceIdentity::from_seed([104; 32])?;
+    let unrelated_device = DeviceIdentity::from_seed([105; 32])?;
+    let genesis = create_chat_genesis(&server_user, "Resilient listener", 1)?;
+    let community = community_id(&genesis)?;
+    let mut server_core = CoreNode::open(
+        EventStore::open(directory.path().join("resilient-server.db"))?,
+        None,
+    )?;
+    server_core.ingest(vec![genesis])?;
+    let client_core = CoreNode::open(
+        EventStore::open(directory.path().join("resilient-client.db"))?,
+        None,
+    )?;
+    let allowed = BTreeSet::from([server_user.user_id(), client_user.user_id()]);
+    let mut server = NetworkNode::new(
+        &server_device,
+        create_device_certificate(&server_user, &server_device, 1),
+        SyncPeer::new(server_core, community)?,
+        allowed.clone(),
+        RevocationSet::default(),
+    )?;
+    let mut client = NetworkNode::new(
+        &client_device,
+        create_device_certificate(&client_user, &client_device, 1),
+        SyncPeer::new(client_core, community)?,
+        allowed,
+        RevocationSet::default(),
+    )?;
+    let server_peer = server.peer_id();
+    let client_peer = client.peer_id();
+    server.listen("/ip4/127.0.0.1/udp/0/quic-v1".parse::<Multiaddr>()?)?;
+    let listen_address = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let NetworkEvent::Listening(address) = server.next_event().await? {
+                return Ok::<Multiaddr, chatcommons_sync::network::NetworkError>(address);
+            }
+        }
+    })
+    .await??;
+
+    client.dial(unrelated_device.peer_id(), listen_address.clone())?;
+    let invalid_handshake = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            tokio::select! {
+                event = server.next_event() => { event?; }
+                event = client.next_event() => {
+                    if event.is_err() {
+                        return Ok::<(), chatcommons_sync::network::NetworkError>(());
+                    }
+                }
+            }
+        }
+    })
+    .await;
+    if let Ok(result) = invalid_handshake {
+        result?;
+    }
+
+    client.dial(server_peer, listen_address)?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            tokio::select! {
+                event = server.next_event() => { event?; }
+                event = client.next_event() => { event?; }
+            }
+            if server.is_authenticated(client_peer) && client.is_authenticated(server_peer) {
+                return Ok::<(), chatcommons_sync::network::NetworkError>(());
+            }
+        }
+    })
+    .await??;
+    Ok(())
+}

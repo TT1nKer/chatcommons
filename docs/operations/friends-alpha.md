@@ -55,6 +55,11 @@ the default route with a physical-interface-scoped route before changing the
 server firewall. A successful scoped sync proves that the server is reachable
 and the local virtual route is the failing boundary.
 
+Alpha.10 applies the same bounded path selection to voice authorization. It
+also keeps the Home Server listener alive when one incoming QUIC handshake is
+rejected. A rising systemd restart count therefore indicates a regression or a
+different process-level failure, not an expected response to untrusted traffic.
+
 ## Voice
 
 The invited alpha uses a separate LiveKit process for audio media. The Home

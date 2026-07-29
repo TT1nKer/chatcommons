@@ -6,6 +6,17 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.10] - 2026-07-29
+
+### Fixed
+
+- A rejected or stale incoming QUIC handshake no longer terminates the
+  Community Home Server. The listener stays available for other members.
+- Desktop voice authorization now uses the same bounded physical-interface
+  fallback as community synchronization when a VPN or TUN route drops QUIC.
+- QUIC handshake timeouts are reported as network timeouts instead of the
+  unrelated generic protocol and invitation error.
+
 ## [0.1.0-alpha.9] - 2026-07-29
 
 ### Fixed

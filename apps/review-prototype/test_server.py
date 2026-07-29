@@ -26,7 +26,7 @@ class ReviewServerTest(unittest.TestCase):
         root = Path(cls.temporary.name)
         downloads = root / "downloads"
         downloads.mkdir()
-        cls.download_name = "ChatCommons-alpha-0.1.0-alpha.9-macOS-arm64.zip"
+        cls.download_name = "ChatCommons-alpha-0.1.0-alpha.10-macOS-arm64.zip"
         cls.download_content = b"friends-alpha-installer"
         (downloads / cls.download_name).write_bytes(cls.download_content)
         os.environ.update(

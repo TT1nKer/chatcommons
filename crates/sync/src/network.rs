@@ -760,8 +760,12 @@ impl NetworkNode {
                 SwarmEvent::OutgoingConnectionError { error, .. } => {
                     return Err(NetworkError::Dial(format!("{error:?}")));
                 }
-                SwarmEvent::ListenerError { error, .. } => {
-                    return Err(NetworkError::Listen(format!("{error:?}")));
+                SwarmEvent::ListenerError { .. } => {
+                    // QUIC reports a rejected incoming handshake as a listener
+                    // error even though the listener remains usable. Network
+                    // input is untrusted; one malformed or stale client must
+                    // not terminate a long-running Community Home Server.
+                    continue;
                 }
                 _ => {}
             }
