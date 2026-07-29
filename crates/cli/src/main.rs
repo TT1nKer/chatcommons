@@ -1546,7 +1546,7 @@ fn parse_dial(options: &Options) -> Result<Option<(PeerId, Multiaddr)>, CliError
     }
 }
 
-fn voice_listen_address<'a>(options: &'a Options) -> Result<&'a str, CliError> {
+fn voice_listen_address(options: &Options) -> Result<&str, CliError> {
     Ok(options
         .optional_one("--listen")?
         .unwrap_or(DEFAULT_QUIC_LISTEN))
