@@ -17,6 +17,11 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 - A failed scoped path falls back once to the existing wildcard listener, so
   machines without a suitable private interface keep the previous behavior.
 
+### Changed
+
+- The Windows friends-alpha package now ships the same alpha.9 network-path
+  recovery behavior as the macOS package.
+
 ## [0.1.0-alpha.8] - 2026-07-28
 
 ### Added
