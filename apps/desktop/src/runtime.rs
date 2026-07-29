@@ -1499,6 +1499,59 @@ esac
 
     #[cfg(unix)]
     #[test]
+    fn voice_grant_does_not_retry_a_protocol_failure() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir()?;
+        let community_id = "ab".repeat(32);
+        let room_id = "cd".repeat(32);
+        let config = temporary.path().join("client.json");
+        save_config(&config, Some(community_id.clone())).map_err(|error| error.detail)?;
+        let executable = temporary.path().join("fake-node");
+        let calls = temporary.path().join("calls");
+        fs::write(
+            &executable,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$*" >> '{}'
+printf 'error: protocol operation rejected\n' >&2
+exit 1
+"#,
+                calls.display(),
+            ),
+        )?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        let paths = Paths {
+            state: temporary.path().join("state"),
+            config,
+            feedback: temporary.path().join("feedback.json"),
+            node: executable,
+        };
+        let listen_addresses = [
+            "/ip4/192.168.1.39/udp/0/quic-v1".to_owned(),
+            "/ip4/0.0.0.0/udp/0/quic-v1".to_owned(),
+        ];
+
+        let error = request_voice_grant_using(
+            &paths,
+            &VoiceTokenInput {
+                community_id,
+                room_id,
+            },
+            &listen_addresses,
+        )
+        .expect_err("a protocol failure must stop voice address fallback");
+
+        assert_eq!(error.code, "protocolOperation");
+        let calls = fs::read_to_string(calls)?;
+        let calls = calls.lines().collect::<Vec<_>>();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].contains(&listen_addresses[0]));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn network_handshake_failure_is_reported_as_a_timeout() -> Result<(), Box<dyn std::error::Error>>
     {
         use std::os::unix::fs::PermissionsExt as _;

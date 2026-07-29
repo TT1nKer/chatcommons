@@ -760,6 +760,9 @@ impl NetworkNode {
                 SwarmEvent::OutgoingConnectionError { error, .. } => {
                     return Err(NetworkError::Dial(format!("{error:?}")));
                 }
+                SwarmEvent::ListenerClosed { reason, .. } => {
+                    return Err(listener_closed_error(reason));
+                }
                 SwarmEvent::ListenerError { .. } => {
                     // QUIC reports a rejected incoming handshake as a listener
                     // error even though the listener remains usable. Network
@@ -1404,6 +1407,14 @@ fn normalize_messages(messages: Vec<SyncMessage>) -> Result<Vec<SyncMessage>, Re
     Ok(normalized)
 }
 
+fn listener_closed_error(reason: Result<(), std::io::Error>) -> NetworkError {
+    let detail = match reason {
+        Ok(()) => "listener closed".to_owned(),
+        Err(error) => format!("{error:?}"),
+    };
+    NetworkError::Listen(detail)
+}
+
 fn validate_voice_grant(grant: &VoiceGrant) -> Result<(), RejectionCode> {
     let valid_url = grant.server_url.starts_with("wss://")
         && grant.server_url.len() <= MAX_VOICE_SERVER_URL_BYTES
@@ -1415,4 +1426,19 @@ fn validate_voice_grant(grant: &VoiceGrant) -> Result<(), RejectionCode> {
         return Err(RejectionCode::VoiceUnavailable);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NetworkError, listener_closed_error};
+
+    #[test]
+    fn closed_listener_is_a_terminal_network_error() {
+        let error = listener_closed_error(Ok(()));
+
+        assert!(matches!(
+            error,
+            NetworkError::Listen(detail) if detail == "listener closed"
+        ));
+    }
 }
