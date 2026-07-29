@@ -232,3 +232,22 @@ source. See [`ADR 0024`](adr/0024-single-client-ui-source.md).
 
 See
 [`ADR 0026`](adr/0026-client-created-single-use-invitations.md).
+
+## Suggested M4d — responsive message delivery
+
+- show a local pending message immediately instead of waiting for the sidecar
+- replace the pending item only with the signed event returned by the trusted
+  Rust boundary
+- expose a clear failed state and explicit retry without inventing Event IDs
+- prevent background Home Server synchronization from blocking message input
+- measure local acknowledgement and remote delivery latency separately
+
+## Suggested M4e — verified in-app updates
+
+- fetch a bounded release manifest from a pinned official update origin
+- authenticate the manifest and verify each package checksum before installation
+- show localized version, release notes, download progress and failure recovery
+- preserve the existing application-data identity and database across updates
+- never accept an update selected by a community server or an arbitrary URL
+- decide separately whether verified updates install only after confirmation or
+  may install automatically outside an active call
