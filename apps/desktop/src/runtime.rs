@@ -12,6 +12,8 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
+use crate::network_path::synchronization_listen_addresses;
+
 const CONFIG_VERSION: u16 = 1;
 const FEEDBACK_ENDPOINT: &str = "https://ttinker.net/chatcommons/api/app-feedback";
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -515,28 +517,46 @@ fn identity_info(paths: &Paths) -> Result<IdentityInfo, ClientError> {
 }
 
 fn synchronize_with_home_server(paths: &Paths) -> Result<(), ClientError> {
+    synchronize_with_home_server_using(paths, &synchronization_listen_addresses())
+}
+
+fn synchronize_with_home_server_using(
+    paths: &Paths,
+    listen_addresses: &[String],
+) -> Result<(), ClientError> {
     let config = load_or_recover_config(paths)?;
     let community_id = config
         .community_id
         .ok_or_else(|| ClientError::new("communityMissing", "no community is configured"))?;
-    run_node_with_timeout(
-        paths,
-        &[
-            "sync-home-server",
-            "--state",
-            path_text(&paths.state)?,
-            "--community",
-            &community_id,
-            "--listen",
-            "/ip4/0.0.0.0/udp/0/quic-v1",
-            "--idle-timeout-ms",
-            SYNC_IDLE_TIMEOUT_MS,
-            "--overall-timeout-ms",
-            SYNC_OVERALL_TIMEOUT_MS,
-        ],
-        SYNC_PROCESS_TIMEOUT,
-    )
-    .map(|_| ())
+    let mut last_error = None;
+    for listen_address in listen_addresses {
+        match run_node_with_timeout(
+            paths,
+            &[
+                "sync-home-server",
+                "--state",
+                path_text(&paths.state)?,
+                "--community",
+                &community_id,
+                "--listen",
+                listen_address,
+                "--idle-timeout-ms",
+                SYNC_IDLE_TIMEOUT_MS,
+                "--overall-timeout-ms",
+                SYNC_OVERALL_TIMEOUT_MS,
+            ],
+            SYNC_PROCESS_TIMEOUT,
+        ) {
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        ClientError::new(
+            "networkPath",
+            "no local network path is available for Home Server synchronization",
+        )
+    }))
 }
 
 fn create_ready_invitation(
@@ -1546,6 +1566,58 @@ esac
 
     #[cfg(unix)]
     #[test]
+    fn home_server_sync_falls_back_after_a_scoped_path_fails()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir()?;
+        let community_id = "ab".repeat(32);
+        let config = temporary.path().join("client.json");
+        save_config(&config, Some(community_id)).map_err(|error| error.detail)?;
+        let executable = temporary.path().join("fake-node");
+        let calls = temporary.path().join("calls");
+        fs::write(
+            &executable,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$*" >> '{}'
+case "$*" in
+  *"/ip4/192.168.1.39/udp/0/quic-v1"*)
+    exit 1
+    ;;
+  *)
+    printf 'SYNCHRONIZED=1\n'
+    ;;
+esac
+"#,
+                calls.display(),
+            ),
+        )?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        let paths = Paths {
+            state: temporary.path().join("state"),
+            config,
+            feedback: temporary.path().join("feedback.json"),
+            node: executable,
+        };
+        let listen_addresses = [
+            "/ip4/192.168.1.39/udp/0/quic-v1".to_owned(),
+            "/ip4/0.0.0.0/udp/0/quic-v1".to_owned(),
+        ];
+
+        synchronize_with_home_server_using(&paths, &listen_addresses)
+            .map_err(|error| error.detail)?;
+
+        let calls = fs::read_to_string(calls)?;
+        let calls = calls.lines().collect::<Vec<_>>();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].contains(&listen_addresses[0]));
+        assert!(calls[1].contains(&listen_addresses[1]));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn unavailable_server_prevents_local_invitation_creation()
     -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::PermissionsExt as _;
@@ -1580,7 +1652,9 @@ esac
         .expect_err("offline servers must reject invite creation");
 
         assert_eq!(error.code, "inviteServerUnavailable");
-        assert_eq!(fs::read_to_string(calls)?.trim(), "sync-home-server");
+        let calls = fs::read_to_string(calls)?;
+        assert!(!calls.is_empty());
+        assert!(calls.lines().all(|command| command == "sync-home-server"));
         Ok(())
     }
 

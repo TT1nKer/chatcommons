@@ -6,6 +6,32 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.9] - 2026-07-29
+
+### Fixed
+
+- Desktop Home Server synchronization now prefers one bounded physical private
+  IPv4 path before the wildcard route. This prevents a system-wide VPN or TUN
+  adapter from silently black-holing QUIC when the ordinary Wi-Fi or Ethernet
+  path can reach the community server.
+- A failed scoped path falls back once to the existing wildcard listener, so
+  machines without a suitable private interface keep the previous behavior.
+
+## [0.1.0-alpha.8] - 2026-07-28
+
+### Added
+
+- Community owners and administrators can create, publish and privately copy
+  one-person invitations from the shared desktop client.
+
+### Changed
+
+- The shared client now uses conversation-first spacing, larger readable type,
+  centered message and composer widths, and a quieter current-community room
+  hierarchy.
+- macOS and Windows downloads can advance independently in the release
+  manifest, avoiding false claims that both platform artifacts are current.
+
 ## [0.1.0-alpha.7] - 2026-07-28
 
 ### Added

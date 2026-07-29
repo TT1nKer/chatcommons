@@ -1,8 +1,8 @@
 {
-  "productVersion": "0.1.0-alpha.8",
+  "productVersion": "0.1.0-alpha.9",
   "channel": "alpha",
   "downloads": {
-    "macos": "0.1.0-alpha.8",
+    "macos": "0.1.0-alpha.9",
     "windows": "0.1.0-alpha.7"
   },
   "coreProtocolVersion": 2,

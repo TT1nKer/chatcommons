@@ -47,6 +47,14 @@ Success prints `AUTHENTICATED`, one or more sync progress lines and
 `SYNC_COMPLETE`. A handshake timeout while the service and UFW are healthy
 indicates the cloud security group is still blocking UDP 4001.
 
+The alpha.9 desktop client also handles a common local failure mode: a VPN or
+TUN adapter may capture the default route while silently dropping QUIC. The
+client first tries one active, non-virtual RFC1918 IPv4 interface and then
+falls back once to the wildcard route. When diagnosing an older client, compare
+the default route with a physical-interface-scoped route before changing the
+server firewall. A successful scoped sync proves that the server is reachable
+and the local virtual route is the failing boundary.
+
 ## Voice
 
 The invited alpha uses a separate LiveKit process for audio media. The Home
