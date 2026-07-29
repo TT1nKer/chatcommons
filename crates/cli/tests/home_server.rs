@@ -19,6 +19,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const NETWORK_COMMAND_TIMEOUT_MS: &str = "15000";
+
 fn run_command(arguments: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
     Ok(Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
         .args(arguments)
@@ -403,6 +405,8 @@ fn declared_home_server_relays_events_between_offline_members()
             &community_text,
             "--listen",
             "/ip4/127.0.0.1/udp/0/quic-v1",
+            "--overall-timeout-ms",
+            NETWORK_COMMAND_TIMEOUT_MS,
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -435,6 +439,8 @@ fn declared_home_server_relays_events_between_offline_members()
             "/ip4/127.0.0.1/udp/0/quic-v1",
             "--exit-after-events",
             &expected_count.to_string(),
+            "--overall-timeout-ms",
+            NETWORK_COMMAND_TIMEOUT_MS,
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -485,6 +491,8 @@ fn declared_home_server_relays_events_between_offline_members()
         "/ip4/127.0.0.1/udp/0/quic-v1",
         "--idle-timeout-ms",
         "1500",
+        "--overall-timeout-ms",
+        NETWORK_COMMAND_TIMEOUT_MS,
     ])?;
     require_success(&uploaded_invite)?;
     assert!(String::from_utf8_lossy(&uploaded_invite.stdout).contains("SYNC_COMPLETE"));
@@ -508,6 +516,8 @@ fn declared_home_server_relays_events_between_offline_members()
         &newcomer_text,
         "--invite-code",
         &invite_code,
+        "--overall-timeout-ms",
+        NETWORK_COMMAND_TIMEOUT_MS,
     ])?;
     require_success(&joined)?;
     assert!(String::from_utf8_lossy(&joined.stdout).contains("JOIN_COMPLETE"));
