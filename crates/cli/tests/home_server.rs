@@ -39,6 +39,26 @@ fn require_success(output: &Output) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+fn run_network_command_with_one_retry(
+    arguments: &[&str],
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let first = run_command(arguments)?;
+    if first.status.success() {
+        return Ok(first);
+    }
+    thread::sleep(Duration::from_millis(100));
+    let second = run_command(arguments)?;
+    if second.status.success() {
+        return Ok(second);
+    }
+    Err(format!(
+        "network command failed twice:\nfirst: {}\nsecond: {}",
+        String::from_utf8_lossy(&first.stderr),
+        String::from_utf8_lossy(&second.stderr)
+    )
+    .into())
+}
+
 fn field(output: &Output, name: &str) -> Result<String, Box<dyn std::error::Error>> {
     let prefix = format!("{name}=");
     String::from_utf8_lossy(&output.stdout)
@@ -481,7 +501,7 @@ fn declared_home_server_relays_events_between_offline_members()
     require_success(&invite)?;
     let invitation_id = EventId::from_bytes(parse_id(&field(&invite, "INVITATION_ID")?)?);
     let invite_code = field(&invite, "INVITE_CODE")?;
-    let uploaded_invite = run_command(&[
+    let uploaded_invite = run_network_command_with_one_retry(&[
         "sync-home-server",
         "--state",
         &owner_text,
