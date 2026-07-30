@@ -24,8 +24,9 @@ ProtectSystem=strict
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 RestrictSUIDSGID=true
 LockPersonality=true
-CapabilityBoundingSet=
-AmbientCapabilities=
+# TURN/UDP uses port 443 while the service remains an unprivileged user.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 LimitNOFILE=65535
 TasksMax=256
 MemoryMax=768M

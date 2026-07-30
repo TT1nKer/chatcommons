@@ -13,6 +13,76 @@ the LiveKit signaling endpoint. Include it inside the TLS virtual host named by
 `CHATCOMMONS_VOICE_SERVER_URL`; WebRTC media ports remain directly exposed as
 described in `docs/operations/friends-alpha.md`.
 
+## LiveKit TURN fallback
+
+The example LiveKit configuration keeps direct ICE/UDP and ICE/TCP enabled and
+adds authenticated TURN/UDP on UDP `443` plus TURN/TLS on TCP `5349`. Relayed
+media uses the bounded UDP range `40000-40100`; the default unbounded range is
+unnecessary for the ten-participant alpha. Create a DNS-only `A` record from
+`turn.ttinker.net` to the LiveKit host. Do not enable Cloudflare's HTTP proxy
+for this record because TURN is not HTTP traffic.
+
+The existing nginx TLS virtual host keeps TCP `443`. TCP `5349` is an
+intentional friends-alpha compromise: strict networks that allow only
+HTTPS/TCP `443` may still require a second public IP or a separately reviewed
+layer-4 TLS dispatcher.
+
+Request a dedicated certificate through the existing ACME webroot:
+
+```sh
+certbot certonly \
+  --webroot \
+  --webroot-path /var/www/ttinker/acme \
+  --cert-name turn.ttinker.net \
+  --domain turn.ttinker.net \
+  --non-interactive \
+  --agree-tos
+```
+
+Do not grant the `livekit` user access to Certbot's private-key directory.
+Install the certificate deployment hook instead:
+
+```sh
+install -o root -g root -m 0755 \
+  deploy/bin/chatcommons-refresh-livekit-turn-cert \
+  /opt/chatcommons/bin/chatcommons-refresh-livekit-turn-cert
+/opt/chatcommons/bin/chatcommons-refresh-livekit-turn-cert
+ln -sfn \
+  /opt/chatcommons/bin/chatcommons-refresh-livekit-turn-cert \
+  /etc/letsencrypt/renewal-hooks/deploy/chatcommons-livekit-turn-cert
+```
+
+The hook accepts only a valid certificate for `turn.ttinker.net`, verifies that
+its private key matches, and copies the pair to `/etc/livekit/tls` as
+`root:livekit` mode `0640`. It ignores renewal events for other certificates
+and restarts LiveKit only when the copied pair changed.
+
+Both the host firewall and cloud firewall must allow UDP `443`, TCP `5349`, and
+UDP `40000-40100`.
+The supplied systemd unit grants the unprivileged LiveKit process only
+`CAP_NET_BIND_SERVICE`, which is required to bind UDP `443`; it does not grant
+network-administration or file-access capabilities. After updating
+`/etc/livekit/livekit.yaml`, restart and verify the service:
+
+```sh
+ufw allow 443/udp comment 'ChatCommons LiveKit TURN UDP'
+ufw allow 5349/tcp comment 'ChatCommons LiveKit TURN TLS'
+ufw allow 40000:40100/udp comment 'ChatCommons LiveKit TURN relay'
+systemctl restart chatcommons-livekit.service
+systemctl show chatcommons-livekit.service \
+  -p ActiveState -p SubState -p NRestarts
+ss -lntup | grep -E ':(443|5349|7880|7881)([[:space:]]|$)'
+openssl s_client \
+  -connect turn.ttinker.net:5349 \
+  -servername turn.ttinker.net \
+  -verify_return_error </dev/null
+```
+
+To roll back TURN without affecting text, restore the previous root-only copy
+of `/etc/livekit/livekit.yaml`, restart `chatcommons-livekit.service`, and
+remove only the two new firewall rules. The existing WSS, ICE/UDP, and ICE/TCP
+paths remain unchanged.
+
 ## Install the process
 
 Build `chatcommons-node` for the target Linux host, then install it and the unit:
