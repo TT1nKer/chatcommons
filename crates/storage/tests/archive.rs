@@ -63,6 +63,7 @@ fn archive_is_deterministic_and_survives_sqlite_reopen() -> Result<(), Box<dyn s
     }
     let reopened = EventStore::open(&path)?;
     assert_eq!(reopened.events(community)?, validated.events());
+    assert_eq!(reopened.community_ids()?, vec![community]);
     Ok(())
 }
 

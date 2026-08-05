@@ -101,7 +101,15 @@ install -o root -g root -m 0600 "$temporary_archive" "$stage/community.ccarchive
 rm -f "$temporary_archive"
 temporary_archive=
 install -o root -g root -m 0600 "$state/identity.json" "$stage/identity.json"
-install -o root -g root -m 0600 "$environment" "$stage/service.env"
+# Media-service bearer credentials are infrastructure secrets, not community
+# state. A restored Home Server starts with voice disabled until an operator
+# provisions a new issuer configuration.
+sed \
+    -e '/^CHATCOMMONS_VOICE_SERVER_URL=/d' \
+    -e '/^CHATCOMMONS_LIVEKIT_API_KEY=/d' \
+    -e '/^CHATCOMMONS_LIVEKIT_API_SECRET=/d' \
+    "$environment" > "$stage/service.env"
+chmod 0600 "$stage/service.env"
 printf 'SNAPSHOT_VERSION=1\nINSTANCE=%s\nCOMMUNITY_ID=%s\nCREATED_AT=%s\n' \
     "$instance" "$community" "$timestamp" > "$stage/manifest"
 (

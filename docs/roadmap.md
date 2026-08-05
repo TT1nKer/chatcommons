@@ -186,7 +186,8 @@ until their respective engineering gates are met.
 - native Chinese/English desktop shell for macOS and Windows
 - automatic test identity initialization in the platform application-data path
 - one-community invite, channel, signed-message and history workflow
-- bounded one-shot Home Server synchronization for interactive clients
+- bounded Home Server synchronization with a non-overlapping two-second
+  friends-alpha receive loop
 - Home Server bootstrap derived from its signed declaration
 - dynamic removal and addition of single-use bootstrap grants
 - macOS arm64 and Windows x64 artifact workflow
@@ -194,3 +195,61 @@ until their respective engineering gates are met.
   automatic update or public-service readiness
 
 See [`ADR 0022`](adr/0022-friends-alpha-desktop-and-server-bootstrap.md).
+
+## M4a.1 — authorized friends-alpha voice (implemented locally)
+
+- room voice for at most ten invited community members
+- short-lived microphone-only grants issued by the Community Home Server after
+  current membership and channel validation
+- one replaceable self-hosted LiveKit SFU; media bypasses the Home Server
+- desktop join, reconnecting, participant, mute and leave states
+- no video, recording, broadcast, browser-review voice or media E2EE
+
+See [`ADR 0025`](adr/0025-authorized-community-voice.md).
+
+## M4b — one reviewed client UI (first desktop slice implemented)
+
+- one React/TypeScript product interface under `apps/client-ui`
+- review adapter with demo data and authorized Annotate integration
+- Tauri adapter boundary for validated Rust snapshots and commands
+- website-only product explanation and download wrapper
+- current eframe client retained only as the separate protocol diagnostic binary
+- Tauri host exposes identity, invitation, signed text, synchronization and
+  private feedback through a serialized Rust boundary
+- macOS and Windows friends-alpha artifacts are built from the shared UI
+
+Browser review and desktop packaging must render the same client component
+source. See [`ADR 0024`](adr/0024-single-client-ui-source.md).
+
+## M4c — client-created invitations and conversation-first visual pass (implemented locally)
+
+- owner/administrator invitation capability derived from resolved protocol state
+- Home Server reachability required before creating a single-use invitation
+- invitation code returned only after the signed event is published
+- one explicit private-copy flow in the shared Chinese/English client
+- current-community rooms only, human-scale typography and centered conversation
+- no contacts, public join requests, reusable invitations, short links or deep links
+
+See
+[`ADR 0026`](adr/0026-client-created-single-use-invitations.md).
+
+## M4d — responsive message delivery (measurement in progress)
+
+- opt-in bounded tracing now separates local persistence, synchronization and
+  cross-device observation without recording message bodies or full Event IDs
+- show a local pending message immediately instead of waiting for the sidecar
+- replace the pending item only with the signed event returned by the trusted
+  Rust boundary
+- expose a clear failed state and explicit retry without inventing Event IDs
+- prevent background Home Server synchronization from blocking message input
+- measure local acknowledgement and remote delivery latency separately
+
+## Suggested M4e — verified in-app updates
+
+- fetch a bounded release manifest from a pinned official update origin
+- authenticate the manifest and verify each package checksum before installation
+- show localized version, release notes, download progress and failure recovery
+- preserve the existing application-data identity and database across updates
+- never accept an update selected by a community server or an arbitrary URL
+- decide separately whether verified updates install only after confirmation or
+  may install automatically outside an active call

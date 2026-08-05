@@ -13,6 +13,7 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import signal
 import sqlite3
 import threading
@@ -32,6 +33,9 @@ CATEGORIES = {"layout", "copy", "feature", "product"}
 PRIORITIES = {"low", "normal", "high"}
 STATUSES = {"pending", "in_progress", "client_review", "completed", "rejected", "withdrawn"}
 PUBLIC_ID_PATTERN = re.compile(r"RV-[A-Za-z0-9_-]{12,32}")
+DOWNLOAD_NAME_PATTERN = re.compile(
+    r"ChatCommons-alpha-[0-9A-Za-z.-]+-(?:macOS-arm64|Windows-x64)\.zip"
+)
 
 
 def utc_now() -> str:
@@ -46,6 +50,12 @@ class Config:
         self.screenshots = Path(os.environ.get("REVIEW_SCREENSHOT_DIR", "./data/screenshots"))
         static_root = os.environ.get("REVIEW_STATIC_ROOT", "")
         self.static_root = Path(static_root).resolve() if static_root else None
+        download_dir = os.environ.get("REVIEW_DOWNLOAD_DIR", "")
+        self.download_dir = (
+            Path(download_dir).resolve()
+            if download_dir
+            else Path(__file__).parent.resolve() / "public" / "downloads"
+        )
         self.review_token = os.environ.get("REVIEW_TOKEN", "")
         self.owner_token = os.environ.get("OWNER_TOKEN", "")
         self.allowed_origin = os.environ.get("REVIEW_ALLOWED_ORIGIN", "")
@@ -55,6 +65,8 @@ class Config:
             raise RuntimeError("REVIEW_TOKEN and OWNER_TOKEN must each contain at least 40 characters")
         if hmac.compare_digest(self.review_token, self.owner_token):
             raise RuntimeError("reviewer and owner credentials must be independent")
+        if not self.download_dir.is_dir():
+            raise RuntimeError("REVIEW_DOWNLOAD_DIR must be an existing directory")
         origin = urlsplit(self.allowed_origin)
         if (
             origin.scheme not in {"http", "https"}
@@ -484,6 +496,29 @@ def make_handler(application: ReviewApplication):
             path = urlsplit(self.path).path.rstrip("/") or "/"
             if path == "/api/health":
                 self.json_response(HTTPStatus.OK, {"ok": True})
+                return
+            download_prefix = "/api/downloads/"
+            if path.startswith(download_prefix):
+                if not self.require_authorized():
+                    return
+                filename = path[len(download_prefix) :]
+                if DOWNLOAD_NAME_PATTERN.fullmatch(filename) is None:
+                    self.error_response(HTTPStatus.NOT_FOUND, "安装包不存在")
+                    return
+                download = application.config.download_dir / filename
+                if not download.is_file():
+                    self.error_response(HTTPStatus.NOT_FOUND, "安装包不存在")
+                    return
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(download.stat().st_size))
+                self.send_header(
+                    "Content-Disposition",
+                    f'attachment; filename="{filename}"',
+                )
+                self.end_headers()
+                with download.open("rb") as source:
+                    shutil.copyfileobj(source, self.wfile, length=64 * 1024)
                 return
             if path == "/api/reviews":
                 if self.require_authorized():

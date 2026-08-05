@@ -1,3 +1,5 @@
+mod voice;
+
 use chatcommons_cli::NodeState;
 use chatcommons_crypto::UserId;
 use chatcommons_node_core::{CoreNode, MAX_PENDING_EVENTS, NodeError};
@@ -16,6 +18,7 @@ use chatcommons_sync::{
     bootstrap::{BootstrapError, create_code, parse_code},
     network::{
         BootstrapGrant, MAX_BOOTSTRAP_ANCESTRY_EVENTS, NetworkError, NetworkEvent, NetworkNode,
+        RejectionCode,
     },
 };
 use libp2p::{Multiaddr, PeerId, identity};
@@ -32,6 +35,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
+use voice::VoiceTokenIssuer;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -43,11 +47,13 @@ Usage:
   chatcommons-node info --state <directory>
   chatcommons-node create-community --state <directory> --name <name>
   chatcommons-node create-channel --state <directory> --community <hex> --name <name>
+  chatcommons-node community-info --state <directory> --community <hex>
+  chatcommons-node list-joined-communities --state <directory>
   chatcommons-node list-channels --state <directory> --community <hex>
   chatcommons-node send-message --state <directory> --community <hex>
-    --channel <hex> --text <message>
+    --channel <hex> (--text <message> | --stdin-field text)
   chatcommons-node list-messages --state <directory> --community <hex>
-    [--channel <hex>]
+    [--channel <hex>] [--limit <count>]
   chatcommons-node set-home-server --state <directory> --community <hex>
     --server-public-key <hex> --endpoint <multiaddr-or-url> [--endpoint <...> ...]
   chatcommons-node export-community --state <directory> --community <hex>
@@ -55,7 +61,9 @@ Usage:
   chatcommons-node import-community --state <directory> --input <archive-file>
   chatcommons-node create-invite --state <directory> --community <hex>
     [--address <public-multiaddr>]
-  chatcommons-node join --state <directory> --invite-code <code>
+  chatcommons-node join --state <directory>
+    (--invite-code <code> | --stdin-field invite-code)
+    [--overall-timeout-ms <milliseconds>]
   chatcommons-node run --state <directory> --community <hex>
     --listen <multiaddr> [--allow-user <user-id-hex> ...]
     [--relay-address <relay-base-multiaddr>]
@@ -66,6 +74,10 @@ Usage:
   chatcommons-node sync-home-server --state <directory> --community <hex>
     --listen <multiaddr> [--relay-address <relay-base-multiaddr>]
     [--exit-after-events <count>] [--idle-timeout-ms <milliseconds>]
+    [--overall-timeout-ms <milliseconds>]
+  chatcommons-node voice-token --state <directory> --community <hex>
+    --channel <hex> [--listen <multiaddr>]
+    [--overall-timeout-ms <milliseconds>]
 
 This is a developer tool. Relay-assisted hole punching requires an explicit relay.
 It has no discovery, production relay configuration, or GUI.
@@ -74,6 +86,9 @@ const MAX_ALLOWED_USERS: usize = 256;
 const DEFAULT_HOME_SERVER_STORE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_CHANNEL_NAME_BYTES: usize = 80;
 const MAX_MESSAGE_BYTES: usize = 4_000;
+const MAX_INVITE_CODE_BYTES: usize = 16 * 1024;
+const MAX_LISTED_MESSAGES: usize = 5_000;
+const DEFAULT_QUIC_LISTEN: &str = "/ip4/0.0.0.0/udp/0/quic-v1";
 
 #[derive(Debug, Error)]
 enum CliError {
@@ -109,6 +124,8 @@ enum CliError {
     Sync(#[from] SyncError),
     #[error("network failed: {0}")]
     Network(#[from] NetworkError),
+    #[error("voice service failed: {0}")]
+    Voice(#[from] voice::VoiceIssuerError),
     #[error("database already contains another or unknown community")]
     WrongDatabaseCommunity,
     #[error("database already contains a community")]
@@ -129,6 +146,8 @@ enum CliError {
     UnsupportedHomeServerEndpoint,
     #[error("community archive could not be fully ingested")]
     IncompleteArchive,
+    #[error("network operation reached its overall timeout")]
+    OperationTimedOut,
     #[error("output failed: {0}")]
     Output(#[from] io::Error),
 }
@@ -213,6 +232,8 @@ async fn run() -> Result<(), CliError> {
         "info" => command_info(&options),
         "create-community" => command_create_community(&options),
         "create-channel" => command_create_channel(&options),
+        "community-info" => command_community_info(&options),
+        "list-joined-communities" => command_list_joined_communities(&options),
         "list-channels" => command_list_channels(&options),
         "send-message" => command_send_message(&options),
         "list-messages" => command_list_messages(&options),
@@ -228,6 +249,7 @@ async fn run() -> Result<(), CliError> {
         "sync-home-server" => {
             command_network(&options, NetworkRole::Peer, DialMode::HomeServer).await
         }
+        "voice-token" => command_voice_token(&options).await,
         _ => Err(CliError::Arguments(format!("unknown command {command}"))),
     }
 }
@@ -296,8 +318,15 @@ fn command_create_channel(options: &Options) -> Result<(), CliError> {
 }
 
 fn command_send_message(options: &Options) -> Result<(), CliError> {
-    options.allow_only(&["--state", "--community", "--channel", "--text"])?;
-    let text = options.require_one("--text")?.trim();
+    options.allow_only(&[
+        "--state",
+        "--community",
+        "--channel",
+        "--text",
+        "--stdin-field",
+    ])?;
+    let text = required_text_input(options, "--text", "text", MAX_MESSAGE_BYTES)?;
+    let text = text.trim();
     if text.is_empty() || text.len() > MAX_MESSAGE_BYTES {
         return Err(CliError::Arguments(format!(
             "message must contain 1 to {MAX_MESSAGE_BYTES} UTF-8 bytes"
@@ -345,6 +374,65 @@ struct MessageView {
     text: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommunityInfoView {
+    community_id: String,
+    name: String,
+    can_invite: bool,
+}
+
+fn command_list_joined_communities(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state"])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let store = EventStore::open(state.database_path())?;
+    let mut joined = Vec::new();
+    for community in store.community_ids()? {
+        let core = CoreNode::open(EventStore::open(state.database_path())?, Some(community))?;
+        if resolve(&core.all_events()?)?
+            .snapshot
+            .members
+            .contains(&state.user().user_id())
+        {
+            joined.push(hex::encode(community.as_bytes()));
+        }
+    }
+    println!("{}", serde_json::to_string(&joined)?);
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn command_community_info(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&["--state", "--community"])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let core = open_community(&state, community)?;
+    let events = core.all_events()?;
+    let resolution = resolve(&events)?;
+    let user_id = state.user().user_id();
+    let can_invite = resolution.snapshot.owner.as_ref() == Some(&user_id)
+        || resolution.snapshot.administrators.contains(&user_id);
+    let accepted = resolution.snapshot.event_ids;
+    let name = events
+        .iter()
+        .filter(|event| accepted.contains(&event.event_id))
+        .find_map(|event| match decode(event) {
+            Ok(ChatPayload::CommunityCreate { name, .. }) => Some(name),
+            _ => None,
+        })
+        .ok_or(CliError::ProfileRejected)?;
+    println!(
+        "{}",
+        serde_json::to_string(&CommunityInfoView {
+            community_id: hex::encode(community.as_bytes()),
+            name,
+            can_invite,
+        })?
+    );
+    io::stdout().flush()?;
+    Ok(())
+}
+
 fn command_list_channels(options: &Options) -> Result<(), CliError> {
     options.allow_only(&["--state", "--community"])?;
     let state = NodeState::load(options.require_one("--state")?)?;
@@ -370,13 +458,22 @@ fn command_list_channels(options: &Options) -> Result<(), CliError> {
 }
 
 fn command_list_messages(options: &Options) -> Result<(), CliError> {
-    options.allow_only(&["--state", "--community", "--channel"])?;
+    options.allow_only(&["--state", "--community", "--channel", "--limit"])?;
     let state = NodeState::load(options.require_one("--state")?)?;
     let community = parse_community(options.require_one("--community")?)?;
     let selected_channel = options
         .optional_one("--channel")?
         .map(parse_hex_32)
         .transpose()?;
+    let limit = options
+        .optional_one("--limit")?
+        .map(parse_positive_usize)
+        .transpose()?;
+    if limit.is_some_and(|count| count > MAX_LISTED_MESSAGES) {
+        return Err(CliError::Arguments(format!(
+            "message limit cannot exceed {MAX_LISTED_MESSAGES}"
+        )));
+    }
     let core = open_community(&state, community)?;
     let events = core.all_events()?;
     let resolution = resolve(&events)?;
@@ -396,6 +493,9 @@ fn command_list_messages(options: &Options) -> Result<(), CliError> {
                 text,
             });
         }
+    }
+    if let Some(limit) = limit {
+        messages = messages.split_off(messages.len().saturating_sub(limit));
     }
     println!("{}", serde_json::to_string(&messages)?);
     io::stdout().flush()?;
@@ -677,18 +777,53 @@ fn command_create_invite(options: &Options) -> Result<(), CliError> {
 }
 
 async fn command_join(options: &Options) -> Result<(), CliError> {
-    options.allow_only(&["--state", "--invite-code"])?;
+    options.allow_only(&[
+        "--state",
+        "--invite-code",
+        "--stdin-field",
+        "--overall-timeout-ms",
+    ])?;
     let state = NodeState::load(options.require_one("--state")?)?;
     let _lock = state.acquire_lock()?;
-    let envelope = parse_code(options.require_one("--invite-code")?)?.validate()?;
+    let invite_code = required_text_input(
+        options,
+        "--invite-code",
+        "invite-code",
+        MAX_INVITE_CODE_BYTES,
+    )?;
+    let envelope = parse_code(invite_code.trim())?.validate()?;
     let prepared = parse_invite_package(envelope.invite_package())?.prepare()?;
     let community = prepared.community();
     let invitation = prepared.invitation();
+    let overall_timeout = options
+        .optional_one("--overall-timeout-ms")?
+        .map(parse_positive_milliseconds)
+        .transpose()?
+        .map(Duration::from_millis);
     let store = EventStore::open(state.database_path())?;
-    if !store.is_empty()? {
-        return Err(CliError::DatabaseNotEmpty);
+    let database_is_empty = store.is_empty()?;
+    if !database_is_empty && store.events(community)?.is_empty() {
+        return Err(CliError::WrongDatabaseCommunity);
     }
-    let core = CoreNode::open(store, None)?;
+    let core = CoreNode::open(
+        store,
+        if database_is_empty {
+            None
+        } else {
+            Some(community)
+        },
+    )?;
+    if !database_is_empty
+        && resolve(&core.all_events()?)?
+            .snapshot
+            .members
+            .contains(&state.user().user_id())
+    {
+        println!("COMMUNITY_ID={}", hex::encode(community.as_bytes()));
+        println!("JOIN_COMPLETE=local");
+        io::stdout().flush()?;
+        return Ok(());
+    }
     let certificate =
         create_device_certificate(state.user(), state.device(), state.created_at_ms());
     let mut network = NetworkNode::new(
@@ -707,8 +842,15 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
     io::stdout().flush()?;
 
     let mut prepared = Some(prepared);
+    let deadline = overall_timeout.map(|timeout| tokio::time::Instant::now() + timeout);
     loop {
-        match network.next_event().await? {
+        let event = match deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline, network.next_event())
+                .await
+                .map_err(|_| CliError::OperationTimedOut)??,
+            None => network.next_event().await?,
+        };
+        match event {
             NetworkEvent::Connected { peer, relayed } => {
                 println!(
                     "CONNECTED={peer} via={}",
@@ -826,8 +968,100 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
             NetworkEvent::BootstrapAcceptance { .. } => {
                 return Err(CliError::ProfileRejected);
             }
+            NetworkEvent::VoiceTokenRequest { .. } | NetworkEvent::VoiceToken { .. } => {
+                return Err(CliError::ProfileRejected);
+            }
         }
         io::stdout().flush()?;
+    }
+}
+
+async fn command_voice_token(options: &Options) -> Result<(), CliError> {
+    options.allow_only(&[
+        "--state",
+        "--community",
+        "--channel",
+        "--listen",
+        "--overall-timeout-ms",
+    ])?;
+    let state = NodeState::load(options.require_one("--state")?)?;
+    let _lock = state.acquire_lock()?;
+    let community = parse_community(options.require_one("--community")?)?;
+    let channel_id = parse_hex_32(options.require_one("--channel")?)?;
+    let listen_address = voice_listen_address(options)?;
+    let overall_timeout = options
+        .optional_one("--overall-timeout-ms")?
+        .map(parse_positive_milliseconds)
+        .transpose()?
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_secs(10));
+    let core = CoreNode::open(EventStore::open(state.database_path())?, Some(community))?;
+    let profile = resolve(&core.all_events()?)?;
+    if !profile.snapshot.members.contains(&state.user().user_id())
+        || !profile.snapshot.channels.contains(&channel_id)
+    {
+        return Err(CliError::ProfileRejected);
+    }
+    let home_server = profile
+        .snapshot
+        .home_server
+        .clone()
+        .ok_or(CliError::MissingHomeServer)?;
+    let (peer, address) = home_server_target(&home_server)?;
+    let certificate =
+        create_device_certificate(state.user(), state.device(), state.created_at_ms());
+    let mut network = NetworkNode::new(
+        state.device(),
+        certificate,
+        SyncPeer::new(core, community)?,
+        profile.snapshot.members,
+        RevocationSet::default(),
+    )?;
+    network.replace_authorization(
+        BTreeSet::from([state.user().user_id()]),
+        BTreeSet::from([DeviceId::from_public_key(&home_server.server_public_key)]),
+    );
+    network.listen(parse_multiaddr(listen_address)?)?;
+    network.dial(peer, address)?;
+
+    let deadline = tokio::time::Instant::now() + overall_timeout;
+    let mut requested = false;
+    loop {
+        let event = tokio::time::timeout_at(deadline, network.next_event())
+            .await
+            .map_err(|_| CliError::OperationTimedOut)??;
+        match event {
+            NetworkEvent::VoiceToken {
+                peer: response_peer,
+                grant,
+            } if response_peer == peer => {
+                serde_json::to_writer(io::stdout().lock(), &grant)?;
+                println!();
+                io::stdout().flush()?;
+                return Ok(());
+            }
+            NetworkEvent::VoiceTokenRequest {
+                peer: request_peer, ..
+            } => {
+                network.resolve_voice_token(request_peer, Err(RejectionCode::VoiceUnavailable))?;
+            }
+            NetworkEvent::Disconnected(disconnected) if disconnected == peer => {
+                return Err(CliError::Network(NetworkError::Request(
+                    "Home Server disconnected before issuing a voice token".into(),
+                )));
+            }
+            NetworkEvent::RequestFailed {
+                peer: failed_peer,
+                reason,
+            } if failed_peer == peer => {
+                return Err(CliError::Network(NetworkError::Request(reason)));
+            }
+            _ => {}
+        }
+        if !requested && network.is_mutually_authenticated(peer) {
+            network.request_voice_token(peer, channel_id)?;
+            requested = true;
+        }
     }
 }
 
@@ -859,6 +1093,7 @@ async fn command_network(
             "--dial-address",
             "--exit-after-events",
             "--idle-timeout-ms",
+            "--overall-timeout-ms",
         ])?,
         (NetworkRole::Peer, DialMode::HomeServer) => options.allow_only(&[
             "--state",
@@ -867,6 +1102,7 @@ async fn command_network(
             "--relay-address",
             "--exit-after-events",
             "--idle-timeout-ms",
+            "--overall-timeout-ms",
         ])?,
         (NetworkRole::HomeServer, DialMode::Explicit) => options.allow_only(&[
             "--state",
@@ -904,6 +1140,11 @@ async fn command_network(
         .map(parse_positive_milliseconds)
         .transpose()?
         .map(Duration::from_millis);
+    let overall_timeout = options
+        .optional_one("--overall-timeout-ms")?
+        .map(parse_positive_milliseconds)
+        .transpose()?
+        .map(Duration::from_millis);
     let max_store_bytes = if role == NetworkRole::HomeServer {
         Some(
             options
@@ -912,6 +1153,11 @@ async fn command_network(
                 .transpose()?
                 .unwrap_or(DEFAULT_HOME_SERVER_STORE_BYTES),
         )
+    } else {
+        None
+    };
+    let voice_issuer = if role == NetworkRole::HomeServer {
+        VoiceTokenIssuer::from_environment()?
     } else {
         None
     };
@@ -932,9 +1178,9 @@ async fn command_network(
     let profile = resolve(&core.all_events()?)?;
     let home_server = profile.snapshot.home_server.clone();
     if role == NetworkRole::HomeServer
-        && !home_server
+        && home_server
             .as_ref()
-            .is_some_and(|binding| binding.server_public_key == state.device().public_key())
+            .is_none_or(|binding| binding.server_public_key != state.device().public_key())
     {
         return Err(if home_server.is_some() {
             CliError::WrongHomeServerIdentity
@@ -1006,27 +1252,37 @@ async fn command_network(
     io::stdout().flush()?;
 
     let mut synchronization_started = false;
+    let overall_deadline = overall_timeout.map(|timeout| tokio::time::Instant::now() + timeout);
     loop {
-        let event = if synchronization_started && idle_timeout.is_some() {
-            match tokio::time::timeout(
-                idle_timeout
-                    .ok_or_else(|| CliError::Arguments("idle timeout is missing".into()))?,
-                network.next_event(),
-            )
-            .await
-            {
-                Ok(result) => result?,
-                Err(_) => {
-                    println!(
-                        "SYNC_COMPLETE events={}",
-                        network.sync_peer().node().event_ids().len()
-                    );
-                    io::stdout().flush()?;
-                    return Ok(());
+        let stored_events_before = network.sync_peer().node().event_ids().len();
+        let idle_deadline = if synchronization_started {
+            idle_timeout.map(|timeout| tokio::time::Instant::now() + timeout)
+        } else {
+            None
+        };
+        let event = match (idle_deadline, overall_deadline) {
+            (Some(idle), Some(overall)) if idle <= overall => {
+                match tokio::time::timeout_at(idle, network.next_event()).await {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        print_sync_complete(&network)?;
+                        return Ok(());
+                    }
                 }
             }
-        } else {
-            network.next_event().await?
+            (Some(_), Some(overall)) | (None, Some(overall)) => {
+                tokio::time::timeout_at(overall, network.next_event())
+                    .await
+                    .map_err(|_| CliError::OperationTimedOut)??
+            }
+            (Some(idle), None) => match tokio::time::timeout_at(idle, network.next_event()).await {
+                Ok(result) => result?,
+                Err(_) => {
+                    print_sync_complete(&network)?;
+                    return Ok(());
+                }
+            },
+            (None, None) => network.next_event().await?,
         };
         let sync_progress = matches!(&event, NetworkEvent::SyncProgress(_));
         match event {
@@ -1073,6 +1329,32 @@ async fn command_network(
             NetworkEvent::BootstrapAccepted(peer) => {
                 println!("UNEXPECTED_BOOTSTRAP_ACCEPTED={peer}")
             }
+            NetworkEvent::VoiceTokenRequest {
+                peer,
+                user_id,
+                device_id,
+                channel_id,
+            } => {
+                let profile = resolve(&network.sync_peer().node().all_events()?)?;
+                let authorized = profile.snapshot.members.contains(&user_id)
+                    && profile.snapshot.channels.contains(&channel_id);
+                let result = match (&voice_issuer, authorized) {
+                    (Some(issuer), true) => issuer
+                        .issue(community, channel_id, user_id, device_id, now_ms()?)
+                        .map_err(|error| {
+                            eprintln!("voice token issuance failed: {error}");
+                            RejectionCode::VoiceUnavailable
+                        }),
+                    (None, _) => Err(RejectionCode::VoiceUnavailable),
+                    (_, false) => Err(RejectionCode::VoiceRoomUnavailable),
+                };
+                let approved = result.is_ok();
+                network.resolve_voice_token(peer, result)?;
+                println!("VOICE_TOKEN_DECISION={peer} approved={approved}");
+            }
+            NetworkEvent::VoiceToken { peer, .. } => {
+                println!("UNEXPECTED_VOICE_TOKEN={peer}")
+            }
             NetworkEvent::BootstrapAcceptance {
                 peer,
                 user_id,
@@ -1104,6 +1386,11 @@ async fn command_network(
             role,
             state.device().public_key(),
         )?;
+        let stored_events_after = network.sync_peer().node().event_ids().len();
+        if role == NetworkRole::HomeServer && stored_events_after > stored_events_before {
+            let announced_peers = network.announce_local_state()?;
+            println!("SYNC_ANNOUNCED peers={announced_peers}");
+        }
         if sync_progress {
             synchronization_started = true;
         }
@@ -1112,14 +1399,19 @@ async fn command_network(
             && exit_after_events
                 .is_some_and(|count| network.sync_peer().node().event_ids().len() >= count)
         {
-            println!(
-                "SYNC_COMPLETE events={}",
-                network.sync_peer().node().event_ids().len()
-            );
-            io::stdout().flush()?;
+            print_sync_complete(&network)?;
             return Ok(());
         }
     }
+}
+
+fn print_sync_complete(network: &NetworkNode) -> Result<(), CliError> {
+    println!(
+        "SYNC_COMPLETE events={}",
+        network.sync_peer().node().event_ids().len()
+    );
+    io::stdout().flush()?;
+    Ok(())
 }
 
 fn refresh_network_authorization(
@@ -1130,11 +1422,11 @@ fn refresh_network_authorization(
 ) -> Result<(), CliError> {
     let profile = resolve(&network.sync_peer().node().all_events()?)?;
     if role == NetworkRole::HomeServer
-        && !profile
+        && profile
             .snapshot
             .home_server
             .as_ref()
-            .is_some_and(|binding| binding.server_public_key == local_device_public_key)
+            .is_none_or(|binding| binding.server_public_key != local_device_public_key)
     {
         return Err(if profile.snapshot.home_server.is_some() {
             CliError::WrongHomeServerIdentity
@@ -1187,6 +1479,40 @@ fn parse_allowed_users(values: &[String]) -> Result<BTreeSet<UserId>, CliError> 
     values.iter().map(|value| parse_user(value)).collect()
 }
 
+fn required_text_input(
+    options: &Options,
+    argument_name: &str,
+    stdin_field_name: &str,
+    max_bytes: usize,
+) -> Result<String, CliError> {
+    let argument = options.optional_one(argument_name)?;
+    let stdin_field = options.optional_one("--stdin-field")?;
+    match (argument, stdin_field) {
+        (Some(value), None) => Ok(value.to_owned()),
+        (None, Some(field)) if field == stdin_field_name => {
+            let mut value = String::new();
+            io::stdin()
+                .take((max_bytes + 1) as u64)
+                .read_to_string(&mut value)?;
+            if value.len() > max_bytes {
+                return Err(CliError::Arguments(format!(
+                    "{stdin_field_name} input exceeds {max_bytes} UTF-8 bytes"
+                )));
+            }
+            Ok(value)
+        }
+        (None, Some(field)) => Err(CliError::Arguments(format!(
+            "--stdin-field must be {stdin_field_name}, got {field}"
+        ))),
+        (Some(_), Some(_)) => Err(CliError::Arguments(format!(
+            "{argument_name} and --stdin-field cannot be supplied together"
+        ))),
+        (None, None) => Err(CliError::Arguments(format!(
+            "missing {argument_name} or --stdin-field {stdin_field_name}"
+        ))),
+    }
+}
+
 fn parse_user(value: &str) -> Result<UserId, CliError> {
     Ok(UserId::from_bytes(parse_hex_32(value)?))
 }
@@ -1224,6 +1550,12 @@ fn parse_dial(options: &Options) -> Result<Option<(PeerId, Multiaddr)>, CliError
             "--dial-peer and --dial-address must be supplied together".into(),
         )),
     }
+}
+
+fn voice_listen_address(options: &Options) -> Result<&str, CliError> {
+    Ok(options
+        .optional_one("--listen")?
+        .unwrap_or(DEFAULT_QUIC_LISTEN))
 }
 
 fn home_server_target(binding: &HomeServerBinding) -> Result<(PeerId, Multiaddr), CliError> {
@@ -1321,6 +1653,53 @@ mod tests {
         assert_eq!(inserted, expected);
         assert_eq!(already_present, 0);
         assert_eq!(core.event_ids().len(), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_sensitive_input_remains_compatible() -> Result<(), CliError> {
+        let options = Options::parse(["--text".to_owned(), "hello".to_owned()].into_iter())?;
+        assert_eq!(
+            required_text_input(&options, "--text", "text", MAX_MESSAGE_BYTES)?,
+            "hello"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sensitive_input_rejects_two_sources() -> Result<(), CliError> {
+        let options = Options::parse(
+            [
+                "--text".to_owned(),
+                "hello".to_owned(),
+                "--stdin-field".to_owned(),
+                "text".to_owned(),
+            ]
+            .into_iter(),
+        )?;
+        assert!(required_text_input(&options, "--text", "text", MAX_MESSAGE_BYTES).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn voice_listen_address_defaults_and_accepts_override() -> Result<(), CliError> {
+        let defaults = Options::parse([].into_iter())?;
+        assert_eq!(
+            voice_listen_address(&defaults)?,
+            "/ip4/0.0.0.0/udp/0/quic-v1"
+        );
+
+        let overridden = Options::parse(
+            [
+                "--listen".to_owned(),
+                "/ip4/192.168.1.39/udp/0/quic-v1".to_owned(),
+            ]
+            .into_iter(),
+        )?;
+        assert_eq!(
+            voice_listen_address(&overridden)?,
+            "/ip4/192.168.1.39/udp/0/quic-v1"
+        );
         Ok(())
     }
 }

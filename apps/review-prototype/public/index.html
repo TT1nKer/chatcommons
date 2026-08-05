@@ -11,11 +11,11 @@
     <meta name="twitter:card" content="summary" />
     <meta name="theme-color" content="#17161b" />
     <title>ChatCommons · 交互原型</title>
-    <link rel="stylesheet" href="./styles.css?v=20260723.9" />
-    <link rel="stylesheet" href="./review.css?v=20260723.9" />
-    <script defer src="./i18n.js?v=20260723.9"></script>
-    <script defer src="./review.js?v=20260723.9"></script>
-    <script defer src="./app.js?v=20260723.9"></script>
+    <link rel="stylesheet" href="./styles.css?v=20260728.1" />
+    <link rel="stylesheet" href="./review.css?v=20260728.1" />
+    <script defer src="./i18n.js?v=20260728.1"></script>
+    <script defer src="./review.js?v=20260728.1"></script>
+    <script defer src="./app.js?v=20260728.1"></script>
   </head>
   <body>
     <div class="app-shell" id="app-shell">
@@ -23,12 +23,12 @@
         <button class="brand" type="button" data-action="home" aria-label="回到现在">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
           <span>ChatCommons</span>
-          <small><span>交互原型</span><b>v0.1.0-alpha.3</b></small>
+          <small><span>交互原型</span><b>v0.1.0-alpha.10</b></small>
         </button>
         <nav class="top-actions" aria-label="全局操作">
           <button class="search-button" type="button" data-action="search"><span>⌘ K</span> 找社区、房间或操作</button>
           <button class="quiet-button" type="button" data-action="about">项目介绍</button>
-          <button class="quiet-button" type="button" data-action="customize" aria-label="调整界面">调整界面</button>
+          <a class="quiet-button client-review-link" href="./client/" aria-label="调整界面">调整界面</a>
           <button class="language-toggle" id="language-toggle" type="button" data-action="toggle-language" aria-label="Switch to English">EN</button>
           <button class="avatar-button" type="button" data-action="profile" aria-label="打开个人资料">林</button>
         </nav>
@@ -41,13 +41,19 @@
               <span class="alpha-access-label"><i></i> FRIENDS ALPHA</span>
               <div>
                 <strong id="alpha-access-title">当前仅开放朋友内测</strong>
-                <p>测试资格通过邀请的评审链接发放。已受邀的朋友可以直接下载 macOS 或 Windows 客户端。</p>
+                <p>测试资格通过邀请的评审链接发放。已受邀的朋友可以选择 macOS 或 Windows 客户端。</p>
               </div>
             </div>
-            <a class="alpha-download-button" data-review-only href="https://github.com/TT1nKer/chatcommons/releases/tag/v0.1.0-alpha.3" target="_blank" rel="noopener noreferrer">
-              <span>下载桌面测试版</span>
-              <small>macOS · Windows →</small>
-            </a>
+            <div class="alpha-download-actions" data-review-only>
+              <a class="alpha-download-button" href="./downloads/ChatCommons-alpha-0.1.0-alpha.10-macOS-arm64.zip">
+                <span>下载桌面测试版</span>
+                <small>macOS · Apple Silicon →</small>
+              </a>
+              <a class="alpha-download-button" href="./downloads/ChatCommons-alpha-0.1.0-alpha.10-Windows-x64.zip">
+                <span>下载桌面测试版</span>
+                <small>Windows · x64 →</small>
+              </a>
+            </div>
           </section>
 
           <section class="product-brief" aria-labelledby="mission-title">
@@ -56,7 +62,7 @@
               <h1 id="mission-title">让社区聊天不再被单一平台锁住。</h1>
               <p>ChatCommons 是一个开源社区聊天应用。每个社区选择自己的长期在线主服务器；以后可以更换服务器，而不必重建身份、成员关系和整个社区。</p>
               <div class="brief-actions">
-                <button class="primary-action" type="button" data-action="about">了解它如何工作</button>
+                <a class="primary-action" href="./client/">进入客户端界面</a>
                 <button class="secondary-action" type="button" data-action="copy-brief">复制项目简介</button>
               </div>
             </div>

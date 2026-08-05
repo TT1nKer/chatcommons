@@ -13,7 +13,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.10"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 
@@ -24,6 +24,7 @@ blake3 = "1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 futures = "0.3"
 hex = "0.4"
+if-addrs = "0.15"
 libp2p = { version = "0.56", features = ["dcutr", "dns", "ed25519", "identify", "json", "macros", "noise", "ping", "quic", "relay", "request-response", "tcp", "tokio", "yamux"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rusqlite = { version = "0.32", features = ["bundled"] }

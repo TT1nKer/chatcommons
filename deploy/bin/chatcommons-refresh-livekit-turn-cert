@@ -1,0 +1,67 @@
+#!/bin/sh
+
+set -eu
+
+EXPECTED_HOST=turn.ttinker.net
+SOURCE_DIR=/etc/letsencrypt/live/$EXPECTED_HOST
+TARGET_DIR=/etc/livekit/tls
+SERVICE=chatcommons-livekit.service
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "certificate deployment must run as root" >&2
+    exit 1
+fi
+
+if [ -n "${RENEWED_LINEAGE:-}" ] &&
+    [ "$(basename "$RENEWED_LINEAGE")" != "$EXPECTED_HOST" ]; then
+    exit 0
+fi
+
+SOURCE_CERT=$SOURCE_DIR/fullchain.pem
+SOURCE_KEY=$SOURCE_DIR/privkey.pem
+
+if [ ! -r "$SOURCE_CERT" ] || [ ! -r "$SOURCE_KEY" ]; then
+    echo "certificate lineage for $EXPECTED_HOST is unavailable" >&2
+    exit 1
+fi
+
+openssl x509 -in "$SOURCE_CERT" -noout -checkend 86400 >/dev/null
+openssl x509 -in "$SOURCE_CERT" -noout -checkhost "$EXPECTED_HOST" >/dev/null
+
+CERT_PUBLIC_KEY=$(
+    openssl x509 -in "$SOURCE_CERT" -pubkey -noout |
+        openssl pkey -pubin -outform DER 2>/dev/null |
+        sha256sum |
+        cut -d ' ' -f 1
+)
+PRIVATE_PUBLIC_KEY=$(
+    openssl pkey -in "$SOURCE_KEY" -pubout -outform DER 2>/dev/null |
+        sha256sum |
+        cut -d ' ' -f 1
+)
+
+if [ "$CERT_PUBLIC_KEY" != "$PRIVATE_PUBLIC_KEY" ]; then
+    echo "certificate and private key do not match" >&2
+    exit 1
+fi
+
+install -o root -g livekit -m 0750 -d "$TARGET_DIR"
+STAGING_DIR=$(mktemp -d "$TARGET_DIR/.turn-cert.XXXXXX")
+trap 'rm -rf "$STAGING_DIR"' EXIT HUP INT TERM
+
+install -o root -g livekit -m 0640 "$SOURCE_CERT" "$STAGING_DIR/fullchain.pem"
+install -o root -g livekit -m 0640 "$SOURCE_KEY" "$STAGING_DIR/privkey.pem"
+
+if [ -f "$TARGET_DIR/fullchain.pem" ] &&
+    [ -f "$TARGET_DIR/privkey.pem" ] &&
+    cmp -s "$STAGING_DIR/fullchain.pem" "$TARGET_DIR/fullchain.pem" &&
+    cmp -s "$STAGING_DIR/privkey.pem" "$TARGET_DIR/privkey.pem"; then
+    exit 0
+fi
+
+mv -f "$STAGING_DIR/fullchain.pem" "$TARGET_DIR/fullchain.pem"
+mv -f "$STAGING_DIR/privkey.pem" "$TARGET_DIR/privkey.pem"
+
+if systemctl is-active --quiet "$SERVICE"; then
+    systemctl restart "$SERVICE"
+fi

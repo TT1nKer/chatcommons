@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ChatCommons Alpha",
+  "version": "0.1.0-alpha.10",
+  "identifier": "net.ttinker.chatcommons.alpha",
+  "build": {
+    "frontendDist": "../client-ui/dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "ChatCommons Alpha",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 540,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost wss:"
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

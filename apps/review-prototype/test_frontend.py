@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import plistlib
 import re
 import unittest
 from pathlib import Path
@@ -13,11 +15,17 @@ class FrontendLocalizationContractTest(unittest.TestCase):
     def test_product_version_is_consistent_across_workspace_and_prototype(self):
         version = (ROOT / "VERSION").read_text().strip()
         cargo = (ROOT / "Cargo.toml").read_text()
+        macos_plist = plistlib.loads(
+            (ROOT / "apps/desktop/packaging/Info.plist").read_bytes()
+        )
         html = (PUBLIC / "index.html").read_text()
         manifest = (PUBLIC / "version.json").read_text()
         cargo_version = re.search(r'^version = "([^"]+)"$', cargo, re.MULTILINE)
+        alpha_build = re.search(r"alpha\.(\d+)$", version)
         self.assertIsNotNone(cargo_version)
+        self.assertIsNotNone(alpha_build)
         self.assertEqual(version, cargo_version.group(1))
+        self.assertEqual(macos_plist["CFBundleVersion"], alpha_build.group(1))
         self.assertIn(f"v{version}", html)
         self.assertIn(f'"productVersion": "{version}"', manifest)
 
@@ -33,10 +41,18 @@ class FrontendLocalizationContractTest(unittest.TestCase):
         html = (PUBLIC / "index.html").read_text()
         localization = (PUBLIC / "i18n.js").read_text()
         application = (PUBLIC / "app.js").read_text()
+        release_manifest = json.loads((PUBLIC / "version.json").read_text())
         self.assertIn("让社区聊天不再被单一平台锁住。", html)
         self.assertIn("Community chat without platform lock-in", html)
         self.assertIn('data-action="copy-brief"', html)
-        self.assertIn("releases/tag/v0.1.0-alpha.3", html)
+        self.assertIn(
+            f"./downloads/ChatCommons-alpha-{release_manifest['downloads']['macos']}-macOS-arm64.zip",
+            html,
+        )
+        self.assertIn(
+            f"./downloads/ChatCommons-alpha-{release_manifest['downloads']['windows']}-Windows-x64.zip",
+            html,
+        )
         self.assertIn("data-review-only", html)
         self.assertIn("桌面 alpha 已连接真实签名聊天", html)
         self.assertIn("function openAbout()", application)
@@ -159,10 +175,41 @@ class FrontendLocalizationContractTest(unittest.TestCase):
             "Alpha access is shared through invited review links.", localization
         )
         self.assertIn("Download desktop alpha", localization)
+        self.assertIn(
+            "Invited friends can choose the macOS or Windows client.",
+            localization,
+        )
+        self.assertIn("function downloadClient(event)", review)
+        self.assertIn("'X-Review-Token': token", review)
+        self.assertIn("./api/downloads/", review)
         self.assertNotIn("data-review-only", application)
         self.assertIn("dataset.reviewAuthorized = 'true'", review)
         self.assertIn('[data-review-only] { display: none !important; }', styles)
         self.assertIn('html[data-review-authorized="true"] [data-review-only]', styles)
+
+    def test_adjust_interface_opens_the_shared_client_ui(self):
+        html = (PUBLIC / "index.html").read_text()
+        styles = (PUBLIC / "styles.css").read_text()
+        client_package = (
+            PUBLIC.parent.parent / "client-ui" / "package.json"
+        ).read_text()
+        client_entry = (
+            PUBLIC.parent.parent / "client-ui" / "src" / "main.tsx"
+        ).read_text()
+        client_html = (
+            PUBLIC.parent.parent / "client-ui" / "index.html"
+        ).read_text()
+        localization = (PUBLIC / "i18n.js").read_text()
+
+        self.assertIn('href="./client/"', html)
+        self.assertIn("进入客户端界面", html)
+        self.assertIn("Open the client interface", localization)
+        self.assertIn("client-review-link", html)
+        self.assertIn(".client-review-link", styles)
+        self.assertIn('"build:review"', client_package)
+        self.assertIn("mountReviewOverlay", client_entry)
+        self.assertIn('id="root" data-no-i18n', client_html)
+        self.assertIn("closest?.('[data-no-i18n]')", localization)
 
     def test_feedback_forms_scroll_and_have_no_product_character_limit(self):
         review = (PUBLIC / "review.js").read_text()

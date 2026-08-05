@@ -18,8 +18,8 @@ The prototype demonstrates:
 - an authenticated click-to-annotate review overlay;
 - an independently authenticated owner inbox with replies and workflow states.
 - a private desktop-feedback endpoint with optional screenshot attachments.
-- review-authorized download controls that remain hidden on the ordinary public
-  prototype.
+- review-authorized installer downloads that are hidden on the ordinary public
+  prototype and enforced by the feedback service.
 
 ## Local review
 
@@ -30,8 +30,10 @@ export REVIEW_TOKEN="$(openssl rand -hex 32)"
 export OWNER_TOKEN="$(openssl rand -hex 32)"
 export REVIEW_ALLOWED_ORIGIN="http://127.0.0.1:8091"
 export REVIEW_STATIC_ROOT="$PWD/apps/review-prototype/public"
+export REVIEW_DOWNLOAD_DIR="$PWD/apps/review-prototype/public/downloads"
 export REVIEW_DB_PATH="$(mktemp -d)/reviews.sqlite3"
 export REVIEW_SCREENSHOT_DIR="${REVIEW_DB_PATH%.sqlite3}-screenshots"
+mkdir -p "$REVIEW_DOWNLOAD_DIR"
 python3 apps/review-prototype/server.py
 ```
 
@@ -51,6 +53,8 @@ not publish either credential.
   before it reaches a terminal owner state. Withdrawal is an audited soft state,
   not physical database deletion.
 - Rotating `REVIEW_TOKEN` revokes all previous reviewer links after restart.
+- Desktop installers are streamed only after the review credential is checked;
+  Nginx must reject direct access to the static `downloads/` directory.
 - SQLite and screenshots live outside the static directory.
 - Screenshots are optional, validated by MIME prefix and magic bytes, capped at
   1 MB decoded, and available only through the owner API.
@@ -66,9 +70,9 @@ not publish either credential.
 
 The production service is for invited design review only. It does not implement
 accounts, password recovery, multiple review projects, backups, or public access.
-Hiding the download control outside an authorized review session is an
-invitation UX boundary, not DRM: the current GitHub repository and release
-artifacts remain public.
+The download gate is intended for a small friends alpha, not as DRM: anyone who
+receives the shared review link can use its capability until the reviewer token
+is rotated.
 The service can be rolled back by repointing its `current` symlink and restarting
 the isolated systemd unit. The reference deployment nests the application under
 the parent ttinker website at `/chatcommons/`; it does not own the site root.

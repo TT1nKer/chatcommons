@@ -6,6 +6,135 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.10] - 2026-07-29
+
+### Fixed
+
+- A rejected or stale incoming QUIC handshake no longer terminates the
+  Community Home Server. The listener stays available for other members.
+- Desktop voice authorization now uses the same bounded physical-interface
+  fallback as community synchronization when a VPN or TUN route drops QUIC.
+- QUIC handshake timeouts are reported as network timeouts instead of the
+  unrelated generic protocol and invitation error.
+
+## [0.1.0-alpha.9] - 2026-07-29
+
+### Fixed
+
+- Desktop Home Server synchronization now prefers one bounded physical private
+  IPv4 path before the wildcard route. This prevents a system-wide VPN or TUN
+  adapter from silently black-holing QUIC when the ordinary Wi-Fi or Ethernet
+  path can reach the community server.
+- A failed scoped path falls back once to the existing wildcard listener, so
+  machines without a suitable private interface keep the previous behavior.
+
+### Changed
+
+- The Windows friends-alpha package now ships the same alpha.9 network-path
+  recovery behavior as the macOS package.
+
+## [0.1.0-alpha.8] - 2026-07-28
+
+### Added
+
+- Community owners and administrators can create, publish and privately copy
+  one-person invitations from the shared desktop client.
+
+### Changed
+
+- The shared client now uses conversation-first spacing, larger readable type,
+  centered message and composer widths, and a quieter current-community room
+  hierarchy.
+- macOS and Windows downloads can advance independently in the release
+  manifest, avoiding false claims that both platform artifacts are current.
+
+## [0.1.0-alpha.7] - 2026-07-28
+
+### Added
+
+- A local microphone selector beside the voice action, with the system default
+  preserved as the zero-configuration choice.
+- Remembered per-device microphone preference and automatic refresh when audio
+  input devices are connected or removed.
+
+### Changed
+
+- The chosen microphone is now used consistently for both local preflight and
+  LiveKit capture. A removed saved device falls back to the system default.
+- Device labels that remain hidden before the first permission grant use
+  localized numbered placeholders and refresh after a successful preflight.
+
+## [0.1.0-alpha.6] - 2026-07-28
+
+### Added
+
+- A local microphone preflight before voice authorization, with the detected
+  input name and a short live input-level meter.
+- Separate Chinese and English recovery guidance for denied macOS and Windows
+  microphone permissions, missing devices, busy devices and unsupported
+  clients.
+
+### Changed
+
+- Voice authorization is requested only after the local microphone check
+  succeeds. Temporary preview tracks and Web Audio resources are released
+  before the LiveKit session starts or immediately when the user cancels.
+
+## [0.1.0-alpha.5] - 2026-07-27
+
+### Added
+
+- Authorized room voice for up to ten invited members through a replaceable
+  self-hosted LiveKit SFU.
+- Five-minute microphone-only media grants issued only after the Community Home
+  Server authenticates the device and revalidates membership and channel state.
+- Desktop join, reconnecting, participant, mute, leave and microphone-error
+  states with Chinese and English copy.
+
+### Security
+
+- Media API secrets remain server-only and voice grants are bounded, validated,
+  short-lived and redacted from debug output.
+- Community snapshots now exclude voice issuer credentials and restore with
+  voice disabled until an operator provisions a new key.
+
+### Changed
+
+- The browser and text client load the media SDK only when voice is requested,
+  keeping voice code out of the initial application bundle.
+- Linux Home Server builds move to the test server rather than consuming local
+  desktop storage.
+
+### Limitations
+
+- Voice media is not end-to-end encrypted in this alpha. The community-operated
+  SFU can observe media and connection metadata.
+- Video, recording, broadcast and browser-review voice remain unavailable.
+
+## [0.1.0-alpha.4] - 2026-07-27
+
+### Added
+
+- A single-source desktop interface shared with the reviewed web client design.
+- Automatic two-second Home Server synchronization after joining, with a
+  single-flight guard that prevents overlapping network operations.
+- Private in-app feedback with long-form reports, optional screenshots and
+  receipt-based owner replies.
+
+### Changed
+
+- Joining a community now opens its first text room immediately.
+- Message sending remains local-first and triggers a background synchronization
+  without blocking the composer.
+- Desktop runtime operations use bounded subprocess and feedback request
+  timeouts, while failed synchronization preserves the validated local history.
+
+### Fixed
+
+- Prevented Enter from sending while an input method is still composing text.
+- Preserved per-room drafts and room selection across delayed synchronization.
+- Added scrollable join and feedback dialogs for short desktop windows.
+
 ## [0.1.0-alpha.3] - 2026-07-23
 
 ### Changed
@@ -90,7 +219,8 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 - Voice, video, screen sharing, MLS, attachments, and production account
   recovery are not implemented.
 
-[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.3...HEAD
+[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.4...HEAD
+[0.1.0-alpha.4]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/TT1nKer/chatcommons/releases/tag/v0.1.0-alpha.1

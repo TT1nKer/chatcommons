@@ -21,6 +21,8 @@ pub enum StorageError {
     Protocol(#[from] chatcommons_protocol::ProtocolError),
     #[error("stored event byte count is invalid")]
     InvalidStoredSize,
+    #[error("stored community identifier is invalid")]
+    InvalidCommunityId,
 }
 
 pub struct EventStore {
@@ -83,6 +85,20 @@ impl EventStore {
             row.get::<_, Vec<u8>>(0)
         })?;
         rows.map(|row| decode_stored(&row?)).collect()
+    }
+
+    pub fn community_ids(&self) -> Result<Vec<CommunityId>, StorageError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT DISTINCT COALESCE(community_id, event_id) FROM events ORDER BY 1")?;
+        let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+        rows.map(|row| {
+            let bytes: [u8; 32] = row?
+                .try_into()
+                .map_err(|_| StorageError::InvalidCommunityId)?;
+            Ok(CommunityId::from_bytes(bytes))
+        })
+        .collect()
     }
 }
 

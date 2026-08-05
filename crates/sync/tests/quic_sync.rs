@@ -8,7 +8,7 @@ use chatcommons_storage::EventStore;
 use chatcommons_sync::{
     SyncPeer,
     auth::{DeviceIdentity, RevocationSet, create_device_certificate},
-    network::{NetworkEvent, NetworkNode},
+    network::{NetworkEvent, NetworkNode, VoiceGrant},
 };
 use libp2p::Multiaddr;
 use std::{collections::BTreeSet, time::Duration};
@@ -94,5 +94,123 @@ async fn two_real_quic_swarms_authenticate_and_sync_sqlite()
     .await??;
 
     assert_eq!(target.sync_peer().node().event_ids().len(), 3);
+    let channel_id = [7; 32];
+    target.request_voice_token(source_peer, channel_id)?;
+    let received_grant = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            tokio::select! {
+                event = source.next_event() => {
+                    if let NetworkEvent::VoiceTokenRequest {
+                        peer,
+                        user_id,
+                        device_id,
+                        channel_id: requested_channel,
+                    } = event?
+                    {
+                        assert_eq!(peer, target_peer);
+                        assert_eq!(user_id, bob.user_id());
+                        assert_eq!(device_id, bob_device.device_id());
+                        assert_eq!(requested_channel, channel_id);
+                        source.resolve_voice_token(peer, Ok(VoiceGrant {
+                            server_url: "wss://voice.example.test".into(),
+                            participant_token: "header.payload.signature".into(),
+                            expires_at_ms: 60_000,
+                        }))?;
+                    }
+                }
+                event = target.next_event() => {
+                    if let NetworkEvent::VoiceToken { peer, grant } = event? {
+                        assert_eq!(peer, source_peer);
+                        break Ok::<VoiceGrant, chatcommons_sync::network::NetworkError>(grant);
+                    }
+                }
+            }
+        }
+    })
+    .await??;
+    assert_eq!(received_grant.server_url, "wss://voice.example.test");
+    assert_eq!(received_grant.participant_token, "header.payload.signature");
+    assert!(!format!("{received_grant:?}").contains("header.payload.signature"));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn invalid_quic_handshake_does_not_stop_the_listener()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let server_user = Identity::from_seed([101; 32]);
+    let client_user = Identity::from_seed([102; 32]);
+    let server_device = DeviceIdentity::from_seed([103; 32])?;
+    let client_device = DeviceIdentity::from_seed([104; 32])?;
+    let unrelated_device = DeviceIdentity::from_seed([105; 32])?;
+    let genesis = create_chat_genesis(&server_user, "Resilient listener", 1)?;
+    let community = community_id(&genesis)?;
+    let mut server_core = CoreNode::open(
+        EventStore::open(directory.path().join("resilient-server.db"))?,
+        None,
+    )?;
+    server_core.ingest(vec![genesis])?;
+    let client_core = CoreNode::open(
+        EventStore::open(directory.path().join("resilient-client.db"))?,
+        None,
+    )?;
+    let allowed = BTreeSet::from([server_user.user_id(), client_user.user_id()]);
+    let mut server = NetworkNode::new(
+        &server_device,
+        create_device_certificate(&server_user, &server_device, 1),
+        SyncPeer::new(server_core, community)?,
+        allowed.clone(),
+        RevocationSet::default(),
+    )?;
+    let mut client = NetworkNode::new(
+        &client_device,
+        create_device_certificate(&client_user, &client_device, 1),
+        SyncPeer::new(client_core, community)?,
+        allowed,
+        RevocationSet::default(),
+    )?;
+    let server_peer = server.peer_id();
+    let client_peer = client.peer_id();
+    server.listen("/ip4/127.0.0.1/udp/0/quic-v1".parse::<Multiaddr>()?)?;
+    let listen_address = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let NetworkEvent::Listening(address) = server.next_event().await? {
+                return Ok::<Multiaddr, chatcommons_sync::network::NetworkError>(address);
+            }
+        }
+    })
+    .await??;
+
+    client.dial(unrelated_device.peer_id(), listen_address.clone())?;
+    let invalid_handshake = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            tokio::select! {
+                event = server.next_event() => { event?; }
+                event = client.next_event() => {
+                    if event.is_err() {
+                        return Ok::<(), chatcommons_sync::network::NetworkError>(());
+                    }
+                }
+            }
+        }
+    })
+    .await;
+    if let Ok(result) = invalid_handshake {
+        result?;
+    }
+
+    client.dial(server_peer, listen_address)?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            tokio::select! {
+                event = server.next_event() => { event?; }
+                event = client.next_event() => { event?; }
+            }
+            if server.is_authenticated(client_peer) && client.is_authenticated(server_peer) {
+                return Ok::<(), chatcommons_sync::network::NetworkError>(());
+            }
+        }
+    })
+    .await??;
     Ok(())
 }

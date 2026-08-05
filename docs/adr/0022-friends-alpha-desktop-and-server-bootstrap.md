@@ -2,6 +2,10 @@
 
 Status: accepted; friends-alpha implementation complete locally
 
+The eframe UI choice in this ADR is superseded for friend-facing product work by
+[ADR 0024](0024-single-client-ui-source.md). The sidecar and Home Server
+bootstrap decisions remain active.
+
 ## Context
 
 The protocol, diagnostic CLI and Community Home Server can already synchronize
@@ -60,17 +64,20 @@ protocol operations rather than a private hosted API.
 
 This alpha has important limitations:
 
-- the invitation bearer secret is briefly present in a local sidecar process
-  argument;
 - there is no account recovery, multi-device authorization or keychain-backed
   identity container;
 - binaries are not notarized or signed by a trusted publisher;
-- there is no automatic update, notification, attachment, voice or background
-  reconnect loop;
+- there is no automatic update, notification, attachment or voice;
+- the friends-alpha client uses bounded two-second Home Server polling rather
+  than a push channel or operating-system background service;
 - one client state cannot yet join multiple communities;
 - public Home Server operation remains outside the production engineering and
   legal gates.
 
 These constraints are visible product limitations, not empty extension
-interfaces. The next client milestone should remove sidecar argument secrets,
-add OS credential storage and test migration before expanding community count.
+interfaces. The desktop host now passes invitation capabilities and message
+bodies through bounded stdin. The diagnostic CLI retains explicit argument
+forms for manual compatibility, so operators remain responsible for avoiding
+shell history and process arguments when handling a real capability. The next
+identity milestone should add OS credential storage and test migration before
+expanding community count.

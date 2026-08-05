@@ -10,7 +10,7 @@
 
 # ChatCommons
 
-Current product version: `0.1.0-alpha.3` (friends-and-contributors alpha).
+Current product version: `0.1.0-alpha.8` (friends-and-contributors alpha).
 Product releases, wire protocol versions, storage schema versions, and server
 deployment revisions are versioned independently. See
 [docs/versioning.md](docs/versioning.md).
@@ -21,9 +21,11 @@ contains protocol v2, one deliberately small reference chat profile, single-use
 bearer invitations, secure invitation bootstrap, direct QUIC synchronization,
 relay-assisted hole punching, and an owner-signed replaceable home-server
 declaration with a bounded diagnostic authenticated Home Server process. The
-workspace now also contains a minimal native friends-alpha text client. It
-contains no production hosted service, trusted release binary, voice
-implementation, account recovery or multi-device identity.
+workspace now also contains a Tauri friends-alpha client backed by the shared
+browser/desktop UI source and a separate native protocol diagnostic shell. It
+contains no production hosted service,
+trusted release binary, voice implementation, account recovery or multi-device
+identity.
 
 | State | Evidence | Current boundary |
 | --- | --- | --- |
@@ -31,10 +33,15 @@ implementation, account recovery or multi-device identity.
 
 ## Friends-alpha preview
 
-The current native client is an intentionally small friends alpha: it creates a
+The current Tauri client is an intentionally small protocol alpha: it creates a
 local test identity, joins a community with a one-person invitation, shows
 validated signed messages, and sends text through the replaceable Community
-Home Server. These screenshots are development captures and will change.
+Home Server. Browser review and desktop packaging use the same client
+components as required by
+[ADR 0024](docs/adr/0024-single-client-ui-source.md). These screenshots are
+development captures and will change.
+
+![ChatCommons friends-alpha home](docs/assets/screenshots/desktop-home-alpha.png)
 
 | Join from an invitation | Signed community chat |
 | --- | --- |
@@ -56,7 +63,8 @@ inbox. It does not require or create a public GitHub issue.
 - `chatcommons-profile-chat`: the optional `chatcommons.chat.v2` reference semantics
 - `chatcommons-sync`: bounded DAG synchronization over direct or relayed connections
 - `chatcommons-relay`: bounded, ephemeral development Circuit Relay v2 node
-- `apps/desktop`: minimal Chinese/English friends-alpha desktop client
+- `apps/client-ui`: single React/TypeScript UI for browser review and Tauri
+- `apps/desktop`: Tauri desktop host plus a separate eframe diagnostic binary
 
 ## M2c-M3d diagnostic node
 
@@ -91,14 +99,15 @@ cargo run --bin chatcommons-node -- run \
 
 cargo run --bin chatcommons-node -- join \
   --state <node-b-directory> \
-  --invite-code <cc1-code>
+  --stdin-field invite-code <<<"$INVITE_CODE"
 ```
 
-The code contains a bearer secret and the diagnostic CLI exposes it in terminal
-and process arguments. Use development identities only. The command has no
-discovery or production relay configuration. Mutating and long-running commands
-hold an advisory per-state process lock; restrict the diagnostic listener to a
-test environment. See
+The code contains a bearer secret. Prefer bounded stdin as shown above; the
+explicit `--invite-code` form remains available for manual compatibility but
+can expose the capability through shell history and process inspection. Use
+development identities only. The command has no discovery or production relay
+configuration. Mutating and long-running commands hold an advisory per-state
+process lock; restrict the diagnostic listener to a test environment. See
 [ADR 0014](docs/adr/0014-m2c-diagnostic-node.md) and
 [ADR 0015](docs/adr/0015-secure-invitation-bootstrap.md).
 

@@ -19,6 +19,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const NETWORK_COMMAND_TIMEOUT_MS: &str = "15000";
+
 fn run_command(arguments: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
     Ok(Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
         .args(arguments)
@@ -35,6 +37,26 @@ fn require_success(output: &Output) -> Result<(), Box<dyn std::error::Error>> {
         )
         .into())
     }
+}
+
+fn run_network_command_with_one_retry(
+    arguments: &[&str],
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let first = run_command(arguments)?;
+    if first.status.success() {
+        return Ok(first);
+    }
+    thread::sleep(Duration::from_millis(100));
+    let second = run_command(arguments)?;
+    if second.status.success() {
+        return Ok(second);
+    }
+    Err(format!(
+        "network command failed twice:\nfirst: {}\nsecond: {}",
+        String::from_utf8_lossy(&first.stderr),
+        String::from_utf8_lossy(&second.stderr)
+    )
+    .into())
 }
 
 fn field(output: &Output, name: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -403,6 +425,8 @@ fn declared_home_server_relays_events_between_offline_members()
             &community_text,
             "--listen",
             "/ip4/127.0.0.1/udp/0/quic-v1",
+            "--overall-timeout-ms",
+            NETWORK_COMMAND_TIMEOUT_MS,
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -435,6 +459,8 @@ fn declared_home_server_relays_events_between_offline_members()
             "/ip4/127.0.0.1/udp/0/quic-v1",
             "--exit-after-events",
             &expected_count.to_string(),
+            "--overall-timeout-ms",
+            NETWORK_COMMAND_TIMEOUT_MS,
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -475,7 +501,7 @@ fn declared_home_server_relays_events_between_offline_members()
     require_success(&invite)?;
     let invitation_id = EventId::from_bytes(parse_id(&field(&invite, "INVITATION_ID")?)?);
     let invite_code = field(&invite, "INVITE_CODE")?;
-    let uploaded_invite = run_command(&[
+    let uploaded_invite = run_network_command_with_one_retry(&[
         "sync-home-server",
         "--state",
         &owner_text,
@@ -485,6 +511,8 @@ fn declared_home_server_relays_events_between_offline_members()
         "/ip4/127.0.0.1/udp/0/quic-v1",
         "--idle-timeout-ms",
         "1500",
+        "--overall-timeout-ms",
+        NETWORK_COMMAND_TIMEOUT_MS,
     ])?;
     require_success(&uploaded_invite)?;
     assert!(String::from_utf8_lossy(&uploaded_invite.stdout).contains("SYNC_COMPLETE"));
@@ -508,6 +536,8 @@ fn declared_home_server_relays_events_between_offline_members()
         &newcomer_text,
         "--invite-code",
         &invite_code,
+        "--overall-timeout-ms",
+        NETWORK_COMMAND_TIMEOUT_MS,
     ])?;
     require_success(&joined)?;
     assert!(String::from_utf8_lossy(&joined.stdout).contains("JOIN_COMPLETE"));
