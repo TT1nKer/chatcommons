@@ -1254,6 +1254,7 @@ async fn command_network(
     let mut synchronization_started = false;
     let overall_deadline = overall_timeout.map(|timeout| tokio::time::Instant::now() + timeout);
     loop {
+        let stored_events_before = network.sync_peer().node().event_ids().len();
         let idle_deadline = if synchronization_started {
             idle_timeout.map(|timeout| tokio::time::Instant::now() + timeout)
         } else {
@@ -1385,6 +1386,11 @@ async fn command_network(
             role,
             state.device().public_key(),
         )?;
+        let stored_events_after = network.sync_peer().node().event_ids().len();
+        if role == NetworkRole::HomeServer && stored_events_after > stored_events_before {
+            let announced_peers = network.announce_local_state()?;
+            println!("SYNC_ANNOUNCED peers={announced_peers}");
+        }
         if sync_progress {
             synchronization_started = true;
         }
