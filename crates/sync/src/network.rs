@@ -415,6 +415,24 @@ impl NetworkNode {
         self.authenticated.contains(&peer) && self.accepted_by_remote.contains(&peer)
     }
 
+    /// Announce the current signed-event heads on every already authenticated
+    /// connection. This restarts synchronization without reconnecting and
+    /// never widens the live authorization set.
+    pub fn announce_local_state(&mut self) -> Result<usize, NetworkError> {
+        let peers: Vec<PeerId> = self
+            .authenticated
+            .intersection(&self.accepted_by_remote)
+            .copied()
+            .collect();
+        let messages = self.sync.head_messages()?;
+        for peer in &peers {
+            for message in messages.iter().cloned() {
+                self.send(*peer, NetworkRequest::Sync { message })?;
+            }
+        }
+        Ok(peers.len())
+    }
+
     /// Replace the live authorization projection after signed community state
     /// changes. Peers removed by the new projection immediately lose sync
     /// authorization even if their transport connection remains open.

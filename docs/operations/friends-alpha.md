@@ -101,6 +101,16 @@ new media-service key before re-enabling voice.
 
 ## Latency diagnosis
 
+The `938574d` desktop candidate established the current baseline against the
+Silicon Valley Home Server. ICMP round-trip time was 163 ms from macOS and 136
+ms from Windows with no measured loss. The latest 100 macOS synchronization
+attempts had a 2746 ms median and 3793 ms p95; 21 Windows attempts had a 3060
+ms median and 3679 ms p95. Operation-lock acquisition was normally zero. The
+per-attempt sidecar and QUIC setup plus the fixed 1.5-second idle-completion
+wait are therefore the primary known text-latency cost. See
+[ADR 0027](../adr/0027-persistent-client-session.md); do not compensate by
+increasing polling frequency.
+
 Latency tracing is off by default. Start each test client with
 `CHATCOMMONS_LATENCY_TRACE=1`, send one uniquely identifiable test message in
 each direction, then join the same voice room. The client writes a bounded

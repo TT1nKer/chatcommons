@@ -203,7 +203,7 @@ impl SyncPeer {
         self.community
     }
 
-    fn head_messages(&self) -> Result<Vec<SyncMessage>, SyncError> {
+    pub(crate) fn head_messages(&self) -> Result<Vec<SyncMessage>, SyncError> {
         let heads = self.node.heads()?;
         if heads.is_empty() {
             return Ok(vec![SyncMessage::Heads {
