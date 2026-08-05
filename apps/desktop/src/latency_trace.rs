@@ -168,12 +168,8 @@ impl LatencyTracer {
             };
             event_ids
                 .into_iter()
-                .filter_map(|event_id| {
-                    state
-                        .observed_events
-                        .insert(event_id.to_owned())
-                        .then(|| event_id.to_owned())
-                })
+                .filter(|event_id| state.observed_events.insert((*event_id).to_owned()))
+                .map(str::to_owned)
                 .collect::<Vec<_>>()
         };
         for event_id in new_events {
