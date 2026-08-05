@@ -1,9 +1,11 @@
+mod latency_trace;
 mod network_path;
 mod runtime;
 
 use runtime::{
     ClientError, ClientInvitation, ClientMessage, ClientSnapshot, CreateInvitationInput,
-    FeedbackInput, FeedbackStatus, RuntimeState, SendMessageInput, VoiceGrant, VoiceTokenInput,
+    FeedbackInput, FeedbackStatus, LatencyMarkInput, RuntimeState, SendMessageInput, VoiceGrant,
+    VoiceTokenInput,
 };
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
@@ -50,6 +52,14 @@ async fn voice_token(
 }
 
 #[tauri::command]
+async fn record_latency_mark(
+    state: State<'_, RuntimeState>,
+    input: LatencyMarkInput,
+) -> Result<(), ClientError> {
+    state.record_latency_mark(input)
+}
+
+#[tauri::command]
 async fn submit_feedback(
     state: State<'_, RuntimeState>,
     input: FeedbackInput,
@@ -84,6 +94,7 @@ pub fn run() {
             create_invitation,
             send_message,
             voice_token,
+            record_latency_mark,
             submit_feedback,
             feedback_status
         ])

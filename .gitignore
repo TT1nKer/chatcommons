@@ -5,6 +5,8 @@
 /apps/client-ui/node_modules/
 /apps/client-ui/*.tsbuildinfo
 /apps/desktop/gen/schemas/
+__pycache__/
+*.pyc
 
 # Local environment and secrets. Commit only documented placeholders.
 .env

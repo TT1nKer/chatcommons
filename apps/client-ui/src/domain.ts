@@ -69,6 +69,19 @@ export interface VoiceGrant {
   expiresAtMs: number;
 }
 
+export type LatencyPhase =
+  | 'voice_join_started'
+  | 'voice_microphone_ready'
+  | 'voice_grant_ready'
+  | 'voice_sfu_connected'
+  | 'voice_audio_started'
+  | 'voice_remote_track';
+
+export interface LatencyMarkInput {
+  phase: LatencyPhase;
+  elapsedMs: number;
+}
+
 export interface FeedbackInput {
   whatHappened: string;
   expected: string;
@@ -109,6 +122,7 @@ export interface ClientAdapter {
   createInvitation(input: CreateInvitationInput): Promise<Invitation>;
   sendMessage(input: SendMessageInput): Promise<Message>;
   voiceToken(input: VoiceTokenInput): Promise<VoiceGrant>;
+  recordLatency(input: LatencyMarkInput): Promise<void>;
   submitFeedback(input: FeedbackInput): Promise<FeedbackStatus>;
   feedbackStatus(): Promise<FeedbackStatus | null>;
 }

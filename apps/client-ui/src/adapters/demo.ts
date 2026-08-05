@@ -143,6 +143,8 @@ export class DemoAdapter implements ClientAdapter {
     );
   }
 
+  async recordLatency(): Promise<void> {}
+
   async submitFeedback(_input: FeedbackInput): Promise<FeedbackStatus> {
     return {
       publicId: 'review-demo',

@@ -99,6 +99,44 @@ Server URL and reverse-proxy endpoint.
 The snapshot script removes all three voice variables; after a restore, issue a
 new media-service key before re-enabling voice.
 
+## Latency diagnosis
+
+Latency tracing is off by default. Start each test client with
+`CHATCOMMONS_LATENCY_TRACE=1`, send one uniquely identifiable test message in
+each direction, then join the same voice room. The client writes a bounded
+`latency-trace.jsonl` file inside its local `ChatCommonsAlpha/node` data
+directory. The file rotates at 1 MiB and contains only phase names, timestamps,
+elapsed durations and a 16-character event marker. It does not contain message
+bodies, identity keys, invite codes, participant tokens or full event IDs.
+
+Example launch commands:
+
+```sh
+# macOS: run the executable inside the installed application bundle.
+CHATCOMMONS_LATENCY_TRACE=1 \
+  "/Applications/ChatCommons Alpha.app/Contents/MacOS/chatcommons-desktop"
+```
+
+```powershell
+# Windows PowerShell: adjust the installed path when necessary.
+$env:CHATCOMMONS_LATENCY_TRACE = "1"
+& "$env:LOCALAPPDATA\ChatCommons Alpha\chatcommons-desktop.exe"
+```
+
+Copy both trace files to one trusted machine and compare them locally:
+
+```sh
+python3 tools/latency_report.py \
+  diagnostics/mac/latency-trace.jsonl \
+  diagnostics/windows/latency-trace.jsonl
+```
+
+The report matches text delivery by the event marker and breaks sync and voice
+join attempts into stages. Synchronize both operating-system clocks before the
+test: cross-device delivery is calculated from wall-clock timestamps, while
+the stage durations within one device use its monotonic clock. Do not publish
+raw diagnostic files even though their contents are deliberately bounded.
+
 If voice must be disabled without affecting text, stop
 `chatcommons-livekit.service`, remove the three voice issuer variables from the
 Home Server environment and restart the Home Server. Existing text state is

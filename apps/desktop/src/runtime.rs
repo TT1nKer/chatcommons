@@ -12,6 +12,7 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
+use crate::latency_trace::{LatencyPhase, LatencyTracer};
 use crate::network_path::synchronization_listen_addresses;
 
 const CONFIG_VERSION: u16 = 1;
@@ -34,18 +35,28 @@ const FEEDBACK_RESPONSE_LIMIT: u64 = 64 * 1024;
 const MAX_FEEDBACK_SCREENSHOT_BYTES: usize = 2 * 1024 * 1024;
 const CLIENT_MESSAGE_LIMIT: &str = "500";
 const MAX_LOCAL_METADATA_BYTES: usize = 64 * 1024;
+const LATENCY_TRACE_ENV: &str = "CHATCOMMONS_LATENCY_TRACE";
+const LATENCY_TRACE_FILE: &str = "latency-trace.jsonl";
+const MAX_CLIENT_LATENCY_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeState {
     paths: Paths,
     operation: Arc<Mutex<()>>,
     feedback_agent: ureq::Agent,
+    latency_tracer: LatencyTracer,
 }
 
 impl RuntimeState {
     pub fn discover() -> Self {
+        let paths = Paths::discover();
+        let latency_enabled = std::env::var(LATENCY_TRACE_ENV).is_ok_and(|value| value == "1");
         Self {
-            paths: Paths::discover(),
+            latency_tracer: LatencyTracer::new(
+                latency_enabled,
+                paths.state.join(LATENCY_TRACE_FILE),
+            ),
+            paths,
             operation: Arc::new(Mutex::new(())),
             feedback_agent: feedback_agent(),
         }
@@ -69,21 +80,47 @@ impl RuntimeState {
     }
 
     pub async fn local_snapshot(&self) -> Result<ClientSnapshot, ClientError> {
-        self.run_serialized(|paths| load_snapshot(paths, SnapshotConnection::Local))
-            .await
+        let snapshot = self
+            .run_serialized(|paths| load_snapshot(paths, SnapshotConnection::Local))
+            .await?;
+        self.latency_tracer
+            .baseline_events(snapshot_event_ids(&snapshot));
+        Ok(snapshot)
     }
 
     pub async fn synchronized_snapshot(&self) -> Result<ClientSnapshot, ClientError> {
-        self.run_serialized(|paths| {
-            let connection = match synchronize_with_home_server(paths) {
-                Ok(()) => SnapshotConnection::Connected,
-                // A failed sync never invalidates the already-validated local DAG.
-                // The UI receives a degraded snapshot instead of losing local access.
-                Err(_) => SnapshotConnection::Degraded,
-            };
-            load_snapshot(paths, connection)
-        })
-        .await
+        let started = Instant::now();
+        self.latency_tracer
+            .mark(LatencyPhase::SyncQueued, None, Some(0));
+        let tracer = self.latency_tracer.clone();
+        let snapshot = self
+            .run_serialized(move |paths| {
+                tracer.mark(
+                    LatencyPhase::SyncLockAcquired,
+                    None,
+                    Some(elapsed_ms(started)),
+                );
+                tracer.mark(LatencyPhase::SyncStarted, None, Some(elapsed_ms(started)));
+                let connection = match synchronize_with_home_server(paths) {
+                    Ok(()) => {
+                        tracer.mark(LatencyPhase::SyncSucceeded, None, Some(elapsed_ms(started)));
+                        SnapshotConnection::Connected
+                    }
+                    // A failed sync never invalidates the already-validated local DAG.
+                    // The UI receives a degraded snapshot instead of losing local access.
+                    Err(_) => {
+                        tracer.mark(LatencyPhase::SyncFailed, None, Some(elapsed_ms(started)));
+                        SnapshotConnection::Degraded
+                    }
+                };
+                let snapshot = load_snapshot(paths, connection)?;
+                tracer.mark(LatencyPhase::SnapshotReady, None, Some(elapsed_ms(started)));
+                Ok(snapshot)
+            })
+            .await?;
+        self.latency_tracer
+            .observe_events(snapshot_event_ids(&snapshot));
+        Ok(snapshot)
     }
 
     pub async fn join(&self, invite_code: String) -> Result<ClientSnapshot, ClientError> {
@@ -115,7 +152,16 @@ impl RuntimeState {
     }
 
     pub async fn send(&self, input: SendMessageInput) -> Result<ClientMessage, ClientError> {
+        let started = Instant::now();
+        self.latency_tracer
+            .mark(LatencyPhase::SendQueued, None, Some(0));
+        let tracer = self.latency_tracer.clone();
         self.run_serialized(move |paths| {
+            tracer.mark(
+                LatencyPhase::SendLockAcquired,
+                None,
+                Some(elapsed_ms(started)),
+            );
             let config = load_config(&paths.config)?;
             let Some(configured_community) = config.community_id else {
                 return Err(ClientError::new(
@@ -150,8 +196,13 @@ impl RuntimeState {
                 MESSAGE_PROCESS_TIMEOUT,
             )?;
             let event_id = output_field(&output, "MESSAGE_EVENT_ID")?;
+            tracer.mark(
+                LatencyPhase::EventPersisted,
+                Some(&event_id),
+                Some(elapsed_ms(started)),
+            );
             let identity = identity_info(paths)?;
-            Ok(ClientMessage {
+            let message = ClientMessage {
                 id: event_id,
                 author: short_id(&identity.user_id),
                 avatar: avatar_symbol(&identity.user_id),
@@ -159,9 +210,30 @@ impl RuntimeState {
                 sent_at: "now".into(),
                 body: body.into(),
                 own: true,
-            })
+            };
+            tracer.mark(
+                LatencyPhase::SendResponseReady,
+                Some(&message.id),
+                Some(elapsed_ms(started)),
+            );
+            Ok(message)
         })
         .await
+    }
+
+    pub fn record_latency_mark(&self, input: LatencyMarkInput) -> Result<(), ClientError> {
+        if input.elapsed_ms > MAX_CLIENT_LATENCY_MS {
+            return Err(ClientError::new(
+                "latencyMarkInvalid",
+                "latency mark duration is outside the diagnostic limit",
+            ));
+        }
+        let phase = LatencyPhase::from_client_name(&input.phase).ok_or_else(|| {
+            ClientError::new("latencyMarkInvalid", "latency mark phase is unsupported")
+        })?;
+        self.latency_tracer
+            .mark(phase, None, Some(input.elapsed_ms));
+        Ok(())
     }
 
     pub async fn create_invitation(
@@ -345,6 +417,13 @@ pub struct SendMessageInput {
 pub struct VoiceTokenInput {
     community_id: String,
     room_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LatencyMarkInput {
+    phase: String,
+    elapsed_ms: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -994,6 +1073,18 @@ fn path_text(path: &Path) -> Result<&str, ClientError> {
 
 fn room_key(community_id: &str, room_id: &str) -> String {
     format!("{community_id}:{room_id}")
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn snapshot_event_ids(snapshot: &ClientSnapshot) -> impl Iterator<Item = &str> {
+    snapshot
+        .messages_by_room
+        .values()
+        .flatten()
+        .map(|message| message.id.as_str())
 }
 
 fn short_id(value: &str) -> String {

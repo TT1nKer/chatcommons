@@ -233,8 +233,10 @@ source. See [`ADR 0024`](adr/0024-single-client-ui-source.md).
 See
 [`ADR 0026`](adr/0026-client-created-single-use-invitations.md).
 
-## Suggested M4d — responsive message delivery
+## M4d — responsive message delivery (measurement in progress)
 
+- opt-in bounded tracing now separates local persistence, synchronization and
+  cross-device observation without recording message bodies or full Event IDs
 - show a local pending message immediately instead of waiting for the sidecar
 - replace the pending item only with the signed event returned by the trusted
   Rust boundary

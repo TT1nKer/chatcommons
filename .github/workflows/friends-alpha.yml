@@ -50,6 +50,7 @@ jobs:
         working-directory: apps/client-ui
       - run: python3 -m unittest -v test_server.py test_frontend.py
         working-directory: apps/review-prototype
+      - run: python3 -m unittest discover -s tools -p 'test_*.py' -v
       - run: cargo fmt --all -- --check
       - run: cargo build --workspace --all-targets
       - run: cargo clippy --workspace --all-targets -- -D warnings

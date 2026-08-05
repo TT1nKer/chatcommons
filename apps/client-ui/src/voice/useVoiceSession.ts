@@ -13,6 +13,7 @@ import {
   ClientBridgeError,
   clientFailureCode,
   type ClientAdapter,
+  type LatencyPhase,
   type VoiceGrant,
 } from '../domain';
 import { microphoneFailureCode, previewMicrophone } from './microphone';
@@ -48,6 +49,10 @@ interface VoiceSessionState {
   participants: VoiceParticipant[];
   errorCode: string;
 }
+
+type VoiceGrantResult =
+  | { grant: VoiceGrant; reason?: never }
+  | { grant?: never; reason: unknown };
 
 const initialState: VoiceSessionState = {
   status: 'idle',
@@ -143,6 +148,13 @@ export function useVoiceSession(adapter: ClientAdapter) {
     roomId: string;
     roomName: string;
   }) => {
+    const voiceStartedAt = performance.now();
+    const recordLatency = (phase: LatencyPhase) => {
+      const elapsedMs = Math.max(0, Math.round(performance.now() - voiceStartedAt));
+      void adapter.recordLatency({ phase, elapsedMs }).catch(() => {
+        console.warn('ChatCommons latency diagnostic mark was not recorded.');
+      });
+    };
     const nextRoomKey = `${communityId}:${roomId}`;
     if (
       state.roomKey === nextRoomKey
@@ -157,6 +169,7 @@ export function useVoiceSession(adapter: ClientAdapter) {
     }
 
     const attempt = generation.current + 1;
+    recordLatency('voice_join_started');
     generation.current = attempt;
     stopMicrophonePreview();
     disconnectCurrent();
@@ -168,6 +181,24 @@ export function useVoiceSession(adapter: ClientAdapter) {
     });
 
     try {
+      let grantResultPromise: Promise<VoiceGrantResult> | null = null;
+      const requestVoiceGrant = () => {
+        grantResultPromise ??= adapter.voiceToken({ communityId, roomId }).then(
+          (grant): VoiceGrantResult => {
+            try {
+              validateGrant(grant);
+              if (generation.current === attempt) {
+                recordLatency('voice_grant_ready');
+              }
+              return { grant };
+            } catch (reason) {
+              return { reason };
+            }
+          },
+          (reason: unknown): VoiceGrantResult => ({ reason }),
+        );
+        return grantResultPromise;
+      };
       const abortController = new AbortController();
       previewAbort.current = abortController;
       let microphoneReady = false;
@@ -177,6 +208,7 @@ export function useVoiceSession(adapter: ClientAdapter) {
           signal: abortController.signal,
           onReady: (microphoneName) => {
             if (generation.current !== attempt) return;
+            void requestVoiceGrant();
             void microphoneSelection.refreshMicrophones();
             setState((current) => ({
               ...current,
@@ -195,14 +227,18 @@ export function useVoiceSession(adapter: ClientAdapter) {
         }
       }
       if (!microphoneReady || generation.current !== attempt) return;
+      recordLatency('voice_microphone_ready');
       setState((current) => ({
         ...current,
         status: 'connecting',
         microphoneLevel: 0,
       }));
 
-      const grant = await adapter.voiceToken({ communityId, roomId });
-      validateGrant(grant);
+      const grantResult = await requestVoiceGrant();
+      if ('reason' in grantResult) {
+        throw grantResult.reason;
+      }
+      const { grant } = grantResult;
       if (generation.current !== attempt) return;
 
       const { Room, RoomEvent, Track } = await import('livekit-client');
@@ -213,6 +249,7 @@ export function useVoiceSession(adapter: ClientAdapter) {
         disconnectOnPageLeave: true,
       });
       roomRef.current = liveRoom;
+      let firstRemoteAudioObserved = false;
 
       const refreshParticipants = () => {
         if (generation.current !== attempt) return;
@@ -250,6 +287,10 @@ export function useVoiceSession(adapter: ClientAdapter) {
         })
         .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
           if (track.kind !== Track.Kind.Audio) return;
+          if (!firstRemoteAudioObserved) {
+            firstRemoteAudioObserved = true;
+            recordLatency('voice_remote_track');
+          }
           const element = track.attach();
           element.dataset.chatcommonsVoiceAudio = 'true';
           element.hidden = true;
@@ -273,6 +314,7 @@ export function useVoiceSession(adapter: ClientAdapter) {
         await liveRoom.disconnect();
         return;
       }
+      recordLatency('voice_sfu_connected');
       await liveRoom.startAudio();
       if (microphoneSelection.selectedMicrophoneId) {
         await liveRoom.localParticipant.setMicrophoneEnabled(
@@ -282,6 +324,7 @@ export function useVoiceSession(adapter: ClientAdapter) {
       } else {
         await liveRoom.localParticipant.setMicrophoneEnabled(true);
       }
+      recordLatency('voice_audio_started');
       refreshParticipants();
       setState((current) => ({
         ...current,

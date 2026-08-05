@@ -5,6 +5,7 @@ import type {
   FeedbackInput,
   FeedbackStatus,
   Invitation,
+  LatencyMarkInput,
   Message,
   SendMessageInput,
   VoiceGrant,
@@ -80,6 +81,10 @@ export class TauriAdapter implements ClientAdapter {
 
   voiceToken(input: VoiceTokenInput): Promise<VoiceGrant> {
     return call<VoiceGrant>('voice_token', { input });
+  }
+
+  recordLatency(input: LatencyMarkInput): Promise<void> {
+    return call<void>('record_latency_mark', { input });
   }
 
   submitFeedback(input: FeedbackInput): Promise<FeedbackStatus> {

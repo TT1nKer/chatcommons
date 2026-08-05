@@ -18,6 +18,7 @@ const voiceSdk = vi.hoisted(() => ({
   startAudio: vi.fn().mockResolvedValue(undefined),
   setMicrophoneEnabled: vi.fn().mockResolvedValue(undefined),
   switchActiveDevice: vi.fn().mockResolvedValue(undefined),
+  listeners: new Map<string, (...args: unknown[]) => void>(),
 }));
 const microphoneSdk = vi.hoisted(() => ({
   addEventListener: vi.fn(),
@@ -38,7 +39,8 @@ vi.mock('livekit-client', () => {
       setMicrophoneEnabled: voiceSdk.setMicrophoneEnabled,
     };
 
-    on() {
+    on(event: string, listener: (...args: unknown[]) => void) {
+      voiceSdk.listeners.set(event, listener);
       return this;
     }
 
@@ -79,6 +81,7 @@ import {
   type ClientSnapshot,
   type FeedbackInput,
   type Message,
+  type VoiceGrant,
 } from './domain';
 
 interface Deferred<T> {
@@ -174,6 +177,7 @@ function createAdapter(
     voiceToken: vi.fn().mockRejectedValue(
       new ClientBridgeError('voiceDesktopOnly', 'voice requires the desktop client'),
     ),
+    recordLatency: vi.fn().mockResolvedValue(undefined),
     submitFeedback: vi.fn().mockResolvedValue({
       publicId: 'feedback-1',
       status: 'received',
@@ -258,6 +262,7 @@ describe('App behavior', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    voiceSdk.listeners.clear();
     microphoneSdk.deviceChangeListeners.clear();
     microphoneSdk.enumerateDevices.mockResolvedValue([]);
     microphoneSdk.addEventListener.mockImplementation((
@@ -610,7 +615,7 @@ describe('App behavior', () => {
     expect(submitted[0].screen).toBe('home');
   });
 
-  it('checks and releases the microphone before requesting a voice grant', async () => {
+  it('starts voice authorization while checking and releasing the microphone', async () => {
     vi.useFakeTimers();
     Object.defineProperty(window, 'AudioContext', {
       configurable: true,
@@ -633,12 +638,15 @@ describe('App behavior', () => {
         resume = vi.fn().mockResolvedValue(undefined);
       },
     });
-    const voiceToken = vi.fn().mockResolvedValue({
+    const pendingGrant = deferred<VoiceGrant>();
+    const voiceToken = vi.fn().mockReturnValue(pendingGrant.promise);
+    const grantedVoice = {
       serverUrl: 'wss://voice.example.test',
       participantToken: 'signed-participant-token',
       expiresAtMs: Date.now() + 60_000,
-    });
-    await render(createAdapter({ kind: 'tauri', voiceToken }));
+    };
+    const recordLatency = vi.fn().mockResolvedValue(undefined);
+    await render(createAdapter({ kind: 'tauri', voiceToken, recordLatency }));
 
     click(roomButton(container, 'Room A'));
     click(container.querySelector('.voice-join'));
@@ -647,23 +655,21 @@ describe('App behavior', () => {
 
     expect(container.querySelector('.voice-dock')?.textContent)
       .toContain('Listening to Test microphone');
-    expect(voiceToken).not.toHaveBeenCalled();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(800);
-    });
-    await settle();
-    await settle();
-
     expect(voiceToken).toHaveBeenCalledWith({
       communityId: 'community-a',
       roomId: 'room-a',
     });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    pendingGrant.resolve(grantedVoice);
+    await settle();
+    await settle();
+
     expect(microphoneSdk.getUserMedia).toHaveBeenCalledWith({
       audio: true,
       video: false,
     });
-    expect(microphoneSdk.getUserMedia.mock.invocationCallOrder[0])
-      .toBeLessThan(voiceToken.mock.invocationCallOrder[0]);
     expect(microphoneSdk.stop).toHaveBeenCalledOnce();
     expect(voiceSdk.connect).toHaveBeenCalledWith(
       'wss://voice.example.test',
@@ -673,6 +679,33 @@ describe('App behavior', () => {
     expect(voiceSdk.setMicrophoneEnabled).toHaveBeenCalledWith(true);
     expect(container.querySelector('.voice-dock')?.textContent)
       .toContain('Voice connected');
+    expect(recordLatency.mock.calls.map(([mark]) => mark.phase)).toEqual([
+      'voice_join_started',
+      'voice_microphone_ready',
+      'voice_grant_ready',
+      'voice_sfu_connected',
+      'voice_audio_started',
+    ]);
+
+    const audio = document.createElement('audio');
+    Object.defineProperty(audio, 'pause', { value: vi.fn() });
+    act(() => {
+      voiceSdk.listeners.get('trackSubscribed')?.({
+        kind: 'audio',
+        attach: () => audio,
+        detach: () => [audio],
+      });
+      voiceSdk.listeners.get('trackSubscribed')?.({
+        kind: 'audio',
+        attach: () => audio,
+        detach: () => [audio],
+      });
+    });
+    expect(recordLatency.mock.calls.at(-1)?.[0].phase)
+      .toBe('voice_remote_track');
+    expect(recordLatency.mock.calls.filter(([mark]) => (
+      mark.phase === 'voice_remote_track'
+    ))).toHaveLength(1);
 
     click(container.querySelector('.voice-leave'));
     expect(voiceSdk.disconnect).toHaveBeenCalled();
