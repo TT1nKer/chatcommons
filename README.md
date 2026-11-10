@@ -10,7 +10,7 @@
 
 # ChatCommons
 
-Current product version: `0.1.0-alpha.6` (friends-and-contributors alpha).
+Current product version: `0.1.0-alpha.7` (friends-and-contributors alpha).
 Product releases, wire protocol versions, storage schema versions, and server
 deployment revisions are versioned independently. See
 [docs/versioning.md](docs/versioning.md).
@@ -230,14 +230,14 @@ The executable go/no-go checklist is
 
 ## Reliability checks / 可靠性验证
 
-Alpha.6 repairs interrupted-history retries, rapid device reconnects, same-identity
+Alpha.7 includes repairs interrupted-history retries, rapid device reconnects, same-identity
 invitation retries and failed-send draft retention. Idle sync success now requires
 an authenticated live session with no outstanding requests or missing event parents;
 it is not a receipt from all members. Refresh/sync remains manual. See the
-[validation record](docs/validation/alpha.6.md) and
-[release notes](docs/releases/v0.1.0-alpha.6.md).
+[validation record](docs/validation/alpha.7.md) and
+[release notes](docs/releases/v0.1.0-alpha.7.md).
 
-Alpha.6 修复历史同步重试、设备快速重连、同一身份邀请重试和保存失败时草稿丢失。
+Alpha.7 包含以下修复：历史同步重试、设备快速重连、同一身份邀请重试和保存失败时草稿丢失。
 空闲同步成功要求认证连接有效、请求已结束且事件父依赖完整；它不代表所有成员已收到消息。
 仍需手动刷新/同步。验证记录和发布说明见上方链接。
 

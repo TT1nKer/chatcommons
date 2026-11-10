@@ -28,3 +28,7 @@ jobs:
       - run: cargo test --locked --workspace --all-targets
       - name: Check prototype localization and feedback
         run: python3 -m unittest discover -s apps/review-prototype -p 'test_*.py'
+      - name: Check text persistence with a legacy console encoding
+        env:
+          PYTHONIOENCODING: cp1252
+        run: python3 scripts/release-smoke.py target/debug/chatcommons-node

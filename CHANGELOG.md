@@ -6,6 +6,22 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] - 2026-11-10
+
+### Fixed
+
+- Emit the cross-platform smoke script's bilingual log as UTF-8 even when
+  Windows redirects stdout with cp1252. Alpha.6's Windows application builds
+  and identity/text/reopen assertions completed, but its final Chinese log line
+  failed encoding and blocked the Release. The alpha.6 signed tag is preserved.
+- Add the cp1252 smoke regression to main/PR and pre-release quality gates.
+
+### Validated
+
+- Includes the alpha.6 text, reconnect, invitation and UI fixes below, with
+  unchanged core/profile wire formats and storage schema.
+- See `docs/validation/alpha.7.md` for fresh-source checks and GUI evidence.
+
 ## [0.1.0-alpha.6] - 2026-11-10
 
 ### Fixed
@@ -128,7 +144,8 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 - Voice, video, screen sharing, MLS, attachments, and production account
   recovery are not implemented.
 
-[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.6...HEAD
+[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.7...HEAD
+[0.1.0-alpha.7]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.6...v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.3...v0.1.0-alpha.6
 [0.1.0-alpha.3]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.1...v0.1.0-alpha.2

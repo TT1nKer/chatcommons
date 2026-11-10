@@ -93,3 +93,15 @@ Window evidence / 窗口证据:
 - [Minimum chat after reconnect / 重连后最小聊天窗口](../assets/screenshots/alpha6-minimum-chat-en.png)
 - [Chinese feedback in minimum window / 最小窗口中文反馈](../assets/screenshots/alpha6-minimum-feedback-zh.png)
 - [Default window after restart / 重启后默认窗口](../assets/screenshots/alpha6-default-restart-zh.png)
+
+
+## Release outcome / 发布结果
+
+The tagged build completed Linux and macOS packaging and both Windows application
+builds. Windows smoke assertions passed, but printing its final bilingual log
+failed under cp1252, so the workflow correctly skipped Release creation. The
+signed alpha.6 tag is preserved. The UTF-8 script fix is released as alpha.7.
+
+Linux/macOS 打包和 Windows 两个应用构建已完成。Windows smoke 功能断言通过，
+但最后的中文日志遇到 cp1252 编码错误，因此没有创建 Release。保留 alpha.6 签名标签，
+UTF-8 日志修复改用 alpha.7 发布。

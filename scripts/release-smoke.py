@@ -21,6 +21,9 @@ def field(output: str, name: str) -> str:
 
 
 def main() -> None:
+    # Windows CI can redirect stdout using a legacy console code page. Emit
+    # bilingual diagnostics as UTF-8 independently of the inherited locale.
+    sys.stdout.reconfigure(encoding="utf-8")
     binary = Path(sys.argv[1]).resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix="chatcommons-release-") as directory:
         state = str(Path(directory) / "state")
