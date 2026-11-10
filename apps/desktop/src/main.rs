@@ -113,7 +113,7 @@ struct Paths {
 
 enum JobResult {
     Loaded(Snapshot),
-    MessageSaved(Snapshot),
+    MessageSaved(Snapshot, String),
     Failed(String),
 }
 
@@ -141,9 +141,16 @@ struct ChatCommonsApp {
 
 impl ChatCommonsApp {
     fn new() -> Self {
-        let paths = app_paths();
+        let mut app = Self::with_paths(app_paths());
+        app.start_job("正在准备本地身份……", |paths| {
+            load_snapshot(&paths, true)
+        });
+        app
+    }
+
+    fn with_paths(paths: Paths) -> Self {
         let feedback_receipt = load_feedback_receipt(&paths.feedback).ok().flatten();
-        let mut app = Self {
+        Self {
             paths,
             snapshot: Snapshot::default(),
             selected_channel: None,
@@ -163,11 +170,7 @@ impl ChatCommonsApp {
             feedback_job: None,
             feedback_receipt,
             job: None,
-        };
-        app.start_job("正在准备本地身份……", |paths| {
-            load_snapshot(&paths, true)
-        });
-        app
+        }
     }
 
     fn text<'a>(&self, chinese: &'a str, english: &'a str) -> &'a str {
@@ -201,6 +204,10 @@ impl ChatCommonsApp {
             return;
         };
         self.job = None;
+        self.apply_job_result(result);
+    }
+
+    fn apply_job_result(&mut self, result: JobResult) {
         match result {
             JobResult::Loaded(snapshot) => {
                 self.adopt_snapshot(&snapshot);
@@ -210,6 +217,8 @@ impl ChatCommonsApp {
                     } else {
                         "社区服务器暂不可达".into()
                     }
+                } else if snapshot.community_id.is_none() {
+                    self.text("本机身份已就绪", "Local identity ready").into()
                 } else if self.english {
                     "Synchronized".into()
                 } else {
@@ -218,7 +227,11 @@ impl ChatCommonsApp {
                 self.last_error = snapshot.warning.clone();
                 self.snapshot = snapshot;
             }
-            JobResult::MessageSaved(snapshot) => {
+            JobResult::MessageSaved(snapshot, saved_text) => {
+                // Keep failed sends and edits made during a save in the composer.
+                if self.draft.trim() == saved_text {
+                    self.draft.clear();
+                }
                 self.adopt_snapshot(&snapshot);
                 self.snapshot = snapshot;
                 self.status = if self.english {
@@ -316,7 +329,6 @@ impl ChatCommonsApp {
         if self.job.is_some() {
             return;
         }
-        self.draft.clear();
         self.status = self.text("正在保存消息……", "Saving message…").into();
         let paths = self.paths.clone();
         let (sender, receiver) = mpsc::channel();
@@ -340,7 +352,7 @@ impl ChatCommonsApp {
                 })
                 .and_then(|_| load_snapshot(&paths, false));
             let _ = sender.send(match result {
-                Ok(snapshot) => JobResult::MessageSaved(snapshot),
+                Ok(snapshot) => JobResult::MessageSaved(snapshot, text),
                 Err(error) => JobResult::Failed(error),
             });
         });
@@ -636,12 +648,17 @@ impl ChatCommonsApp {
                                     .strong(),
                             );
                             ui.add_space(8.0);
-                            ui.add_sized(
-                                [ui.available_width(), 118.0],
-                                egui::TextEdit::multiline(&mut self.invite_code)
-                                    .hint_text("cc1_…")
-                                    .font(egui::TextStyle::Monospace),
-                            );
+                            egui::ScrollArea::vertical()
+                                .id_salt("invite-code-scroll")
+                                .max_height(118.0)
+                                .show(ui, |ui| {
+                                    ui.add_sized(
+                                        [ui.available_width(), 118.0],
+                                        egui::TextEdit::multiline(&mut self.invite_code)
+                                            .hint_text("cc1_…")
+                                            .font(egui::TextStyle::Monospace),
+                                    );
+                                });
                             ui.add_space(12.0);
                             ui.horizontal(|ui| {
                                 let join_label = if self.job.is_some() {
@@ -703,7 +720,6 @@ impl ChatCommonsApp {
 
     fn show_chat(&mut self, ui: &mut egui::Ui) {
         let height = ui.available_height();
-        let width = ui.available_width();
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(
                 Vec2::new(246.0, height),
@@ -713,7 +729,7 @@ impl ChatCommonsApp {
             ui.separator();
             ui.add_space(8.0);
             ui.allocate_ui_with_layout(
-                Vec2::new((width - 266.0).max(360.0), height),
+                Vec2::new(ui.available_width().max(360.0), height),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| self.show_conversation(ui),
             );
@@ -728,17 +744,19 @@ impl ChatCommonsApp {
                 ui.set_min_size(Vec2::new(210.0, (ui.available_height() - 36.0).max(300.0)));
                 ui.set_max_width(210.0);
                 ui.label(
-                    RichText::new(self.text("永久测试社区", "PERMANENT TEST COMMUNITY"))
+                    RichText::new(self.text("当前社区", "CURRENT COMMUNITY"))
                         .size(8.0)
                         .color(ACCENT)
                         .strong(),
                 );
                 ui.add_space(5.0);
                 ui.label(
-                    RichText::new("chatcommonsTestCommunity")
-                        .size(14.0)
-                        .strong()
-                        .color(INK),
+                    RichText::new(short_id(
+                        self.snapshot.community_id.as_deref().unwrap_or(""),
+                    ))
+                    .size(14.0)
+                    .strong()
+                    .color(INK),
                 );
                 ui.add_space(22.0);
                 ui.label(
@@ -1554,6 +1572,7 @@ fn localized_status(status: &str, english: bool) -> String {
         ("正在准备本地身份……", "Preparing local identity…"),
         ("社区服务器暂不可达", "Home Server unavailable"),
         ("已同步", "Synchronized"),
+        ("本机身份已就绪", "Local identity ready"),
         (
             "已在本地显示 · 正在同步……",
             "Saved locally · synchronizing…",
@@ -1737,5 +1756,210 @@ mod tests {
     #[test]
     fn message_time_uses_stable_utc_clock_metadata() {
         assert_eq!(message_time(3_661_000), "01:01 UTC");
+    }
+    fn test_app(directory: &Path) -> ChatCommonsApp {
+        ChatCommonsApp::with_paths(Paths {
+            state: directory.join("state"),
+            config: directory.join("client.json"),
+            feedback: directory.join("feedback.json"),
+            node: directory.join("missing-node"),
+        })
+    }
+
+    #[test]
+    fn failed_send_preserves_draft_and_localizes_recovery_status()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        for english in [false, true] {
+            let mut app = test_app(directory.path());
+            app.english = english;
+            app.draft = "unsaved message".into();
+            app.snapshot.community_id = Some("test-community".into());
+            app.selected_channel = Some("test-channel".into());
+            app.send();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while app.job.is_some() {
+                assert!(std::time::Instant::now() < deadline, "send did not finish");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                app.poll_job();
+            }
+            assert_eq!(app.draft, "unsaved message");
+            assert_eq!(
+                app.status,
+                if english {
+                    "Operation failed · open Feedback for details"
+                } else {
+                    "操作失败 · 可在“反馈与问题”查看详情"
+                }
+            );
+            assert_eq!(
+                localized_status(&app.status, !english),
+                if english {
+                    "操作失败 · 可在“反馈与问题”查看详情"
+                } else {
+                    "Operation failed · open Feedback for details"
+                }
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn confirmed_save_clears_only_the_sent_draft() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        for (draft, expected) in [(" sent ", ""), ("new edit", "new edit")] {
+            let mut app = test_app(directory.path());
+            app.draft = draft.into();
+            app.apply_job_result(JobResult::MessageSaved(Snapshot::default(), "sent".into()));
+            assert_eq!(app.draft, expected);
+            assert!(app.job.is_some());
+        }
+        Ok(())
+    }
+    #[test]
+    fn identity_only_status_and_community_label_follow_language()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        for english in [false, true] {
+            let mut app = test_app(directory.path());
+            app.english = english;
+            app.apply_job_result(JobResult::Loaded(Snapshot::default()));
+            assert_eq!(
+                app.status,
+                if english {
+                    "Local identity ready"
+                } else {
+                    "本机身份已就绪"
+                }
+            );
+            assert_eq!(
+                localized_status(&app.status, !english),
+                if english {
+                    "本机身份已就绪"
+                } else {
+                    "Local identity ready"
+                }
+            );
+            app.snapshot.community_id = Some("a1234567890b".into());
+            let context = egui::Context::default();
+            let output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(760.0, 540.0),
+                    )),
+                    ..Default::default()
+                },
+                |root| {
+                    egui::CentralPanel::default().show(root, |ui| app.show_sidebar(ui));
+                },
+            );
+            let text: String = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::epaint::Shape::Text(text) = &shape.shape {
+                        Some(text.galley.job.text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                text.contains(if english {
+                    "CURRENT COMMUNITY"
+                } else {
+                    "当前社区"
+                }),
+                "{text}"
+            );
+            assert!(!text.contains("chatcommonsTestCommunity"));
+        }
+        Ok(())
+    }
+    #[test]
+    fn long_invite_keeps_join_action_visible_in_both_languages()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        for english in [false, true] {
+            let mut app = test_app(directory.path());
+            app.english = english;
+            app.invite_code = format!("cc1_{}", "a".repeat(6000));
+            let context = egui::Context::default();
+            let output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(760.0, 540.0),
+                    )),
+                    ..Default::default()
+                },
+                |root| {
+                    egui::CentralPanel::default().show(root, |ui| app.show_join(ui));
+                },
+            );
+            let label = if english {
+                "Join community →"
+            } else {
+                "加入社区 →"
+            };
+            let action = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::epaint::Shape::Text(text) = &shape.shape {
+                        (text.galley.job.text == label).then_some(text)
+                    } else {
+                        None
+                    }
+                })
+                .expect("localized join action must be rendered");
+            assert!(
+                action.pos.y + action.galley.size().y < 540.0,
+                "join action overflowed: {}",
+                action.pos.y
+            );
+        }
+        Ok(())
+    }
+    #[test]
+    fn composer_and_send_button_fit_minimum_window_in_both_languages()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        for english in [false, true] {
+            let mut app = test_app(directory.path());
+            app.english = english;
+            app.snapshot.community_id = Some("a1234567890b".into());
+            let context = egui::Context::default();
+            let output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(760.0, 540.0),
+                    )),
+                    ..Default::default()
+                },
+                |root| {
+                    egui::CentralPanel::default().show(root, |ui| app.show_chat(ui));
+                },
+            );
+            let mut found = false;
+            for shape in &output.shapes {
+                if let egui::epaint::Shape::Rect(rect) = &shape.shape
+                    && rect.fill == ACCENT
+                {
+                    found = true;
+                    assert!(
+                        rect.rect.max.x <= 760.0,
+                        "send button overflowed: {:?}",
+                        rect.rect
+                    );
+                    assert!(rect.rect.max.y <= 540.0);
+                }
+            }
+            assert!(found, "send action must be rendered");
+        }
+        Ok(())
     }
 }

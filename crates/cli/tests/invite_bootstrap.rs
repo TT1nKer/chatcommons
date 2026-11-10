@@ -1,5 +1,6 @@
 #![cfg(unix)]
 
+use chatcommons_cli::NodeState;
 use chatcommons_crypto::UserId;
 use chatcommons_node_core::CoreNode;
 use chatcommons_profile_chat::{InviteCapability, resolve};
@@ -183,6 +184,29 @@ fn invite_code_bootstraps_a_new_member_over_quic() -> Result<(), Box<dyn std::er
     assert!(!wrong_join.status.success());
     assert!(String::from_utf8_lossy(&wrong_join.stderr).contains("InvalidBootstrap"));
 
+    // Reproduce an interrupted join: local admission was persisted, but the
+    // acceptance never reached the server. Retrying must reuse this event.
+    let source_events = EventStore::open(source_path.join("events.sqlite3"))?.events(community)?;
+    let invitation_event = source_events
+        .iter()
+        .find(|event| event.event_id == invitation_id)
+        .ok_or("missing invitation")?;
+    let envelope = chatcommons_sync::bootstrap::parse_code(&invite_code)?.validate()?;
+    let cached_acceptance =
+        chatcommons_profile_chat::parse_invite_package(envelope.invite_package())?
+            .validate(invitation_event)?
+            .create_acceptance(
+                NodeState::load(&target_path)?.user(),
+                vec![invitation_id],
+                3,
+            )?;
+    let mut target_node =
+        CoreNode::open(EventStore::open(target_path.join("events.sqlite3"))?, None)?;
+    let mut cached = source_events;
+    cached.push(cached_acceptance.clone());
+    target_node.ingest(cached)?;
+    drop(target_node);
+
     let mut target = Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
         .args([
             "join",
@@ -224,6 +248,18 @@ fn invite_code_bootstraps_a_new_member_over_quic() -> Result<(), Box<dyn std::er
     }
     assert!(target_stdout.contains("JOIN_COMPLETE="));
 
+    // Reproduce a lost success/config write: repeat the same invitation with
+    // the same identity after remote admission. This must sync, not redeem again.
+    let resumed = run_command(&[
+        "join",
+        "--state",
+        &target_text,
+        "--invite-code",
+        &invite_code,
+    ])?;
+    require_success(&resumed)?;
+    assert!(String::from_utf8_lossy(&resumed.stdout).contains("JOIN_COMPLETE="));
+
     let replay_path = temporary.path().join("replay");
     let replay_text = replay_path.to_string_lossy().into_owned();
     require_success(&run_command(&["init", "--state", &replay_text])?)?;
@@ -255,6 +291,11 @@ fn invite_code_bootstraps_a_new_member_over_quic() -> Result<(), Box<dyn std::er
     )?;
     assert_eq!(source_core.event_ids(), target_core.event_ids());
     assert_eq!(source_core.event_ids().len(), 3);
+    assert!(
+        source_core
+            .event_ids()
+            .contains(&cached_acceptance.event_id)
+    );
     let profile = resolve(&source_core.all_events()?)?;
     assert!(profile.snapshot.members.contains(&target_user));
     assert!(profile.snapshot.active_invitations.is_empty());

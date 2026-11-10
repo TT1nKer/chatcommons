@@ -242,3 +242,42 @@ fn storage_quota_rejects_new_events_without_persisting_them()
     assert_eq!(peer.pending_len(), 0);
     Ok(())
 }
+
+#[test]
+fn repeated_inventory_retries_a_lost_parent_request() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let identity = Identity::from_seed([80; 32]);
+    let genesis = create_genesis(&identity, "sync.genesis", vec![], 1);
+    let community = community_id(&genesis)?;
+    let middle = event(&identity, community, vec![genesis.event_id], 2);
+    let head = event(&identity, community, vec![middle.event_id], 3);
+    let mut source_node =
+        CoreNode::open(EventStore::open(directory.path().join("source.db"))?, None)?;
+    source_node.ingest(vec![genesis, middle, head.clone()])?;
+    let target_node = CoreNode::open(EventStore::open(directory.path().join("target.db"))?, None)?;
+    let mut source = SyncPeer::new(source_node, community)?;
+    let mut target = SyncPeer::new(target_node, community)?;
+    // The child arrived, but the connection dropped before its parent response.
+    let lost = target.receive(SyncMessage::Events {
+        community_id: community,
+        events: vec![head.clone()],
+    })?;
+    assert!(!lost.is_empty());
+    assert_eq!(target.pending_len(), 1);
+    // A duplicate child must also be harmless before retrying the inventory.
+    target.receive(SyncMessage::Events {
+        community_id: community,
+        events: vec![head],
+    })?;
+    drive(&mut source, &mut target)?;
+    assert_eq!(target.node().event_ids(), source.node().event_ids());
+    assert_eq!(target.pending_len(), 0);
+    let ids = target.node().event_ids().clone();
+    drop(target);
+    let reopened = CoreNode::open(
+        EventStore::open(directory.path().join("target.db"))?,
+        Some(community),
+    )?;
+    assert_eq!(reopened.event_ids(), &ids);
+    Ok(())
+}

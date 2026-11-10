@@ -75,7 +75,7 @@ async fn two_real_quic_swarms_authenticate_and_sync_sqlite()
         }
     })
     .await??;
-    target.dial(source_peer, listen_address)?;
+    target.dial(source_peer, listen_address.clone())?;
 
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -94,5 +94,49 @@ async fn two_real_quic_swarms_authenticate_and_sync_sqlite()
     .await??;
 
     assert_eq!(target.sync_peer().node().event_ids().len(), 3);
+
+    // Keep the old target alive so the source still has peer-level auth state.
+    // A new process with the same persisted device must receive a fresh
+    // certificate/inventory on its overlapping connection.
+    let reopened = CoreNode::open(
+        EventStore::open(directory.path().join("quic-target.db"))?,
+        Some(community),
+    )?;
+    let mut restarted = NetworkNode::new(
+        &bob_device,
+        create_device_certificate(&bob, &bob_device, 1),
+        SyncPeer::new(reopened, community)?,
+        BTreeSet::from([alice.user_id(), bob.user_id()]),
+        RevocationSet::default(),
+    )?;
+    restarted.dial(source_peer, listen_address)?;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            tokio::select! {
+                event = source.next_event() => { event?; }
+                event = restarted.next_event() => { event?; }
+            }
+            if restarted.is_authenticated(source_peer) && restarted.sync_is_idle() {
+                return Ok::<(), chatcommons_sync::network::NetworkError>(());
+            }
+        }
+    })
+    .await??;
+    assert_eq!(
+        restarted.sync_peer().node().event_ids(),
+        target.sync_peer().node().event_ids()
+    );
+    drop(source);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if matches!(restarted.next_event().await?, NetworkEvent::Disconnected(peer) if peer == source_peer) {
+                return Ok::<(), chatcommons_sync::network::NetworkError>(());
+            }
+        }
+    }).await??;
+    assert!(
+        !restarted.sync_is_idle(),
+        "disconnect must revoke sync completion"
+    );
     Ok(())
 }

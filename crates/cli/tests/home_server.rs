@@ -30,8 +30,9 @@ fn require_success(output: &Output) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     } else {
         Err(format!(
-            "command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "command failed: {}\nstdout: {}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
         )
         .into())
     }
@@ -79,7 +80,7 @@ impl RunningNode {
         let mut child = Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
             .args(arguments)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::inherit())
             .spawn()?;
         let stdout = child.stdout.take().ok_or("node stdout was not captured")?;
         let (sender, receiver) = mpsc::channel();
@@ -424,6 +425,21 @@ fn declared_home_server_relays_events_between_offline_members()
     let _ = uploader.kill();
     let _ = uploader.wait();
 
+    // Stop both clients before restarting the persistent server. The next
+    // member must recover the uploaded history from SQLite, not process memory.
+    drop(server);
+    let (mut server, _) = RunningNode::spawn(&[
+        "serve-community",
+        "--state",
+        &server_text,
+        "--community",
+        &community_text,
+        "--listen",
+        &declared_endpoint,
+        "--max-store-bytes",
+        "1048576",
+    ])?;
+
     let mut downloader = Command::new(env!("CARGO_BIN_EXE_chatcommons-node"))
         .args([
             "sync-home-server",
@@ -486,7 +502,7 @@ fn declared_home_server_relays_events_between_offline_members()
         "--idle-timeout-ms",
         "1500",
     ])?;
-    require_success(&uploaded_invite)?;
+    require_success(&uploaded_invite).map_err(|e| format!("upload invitation: {e}"))?;
     assert!(String::from_utf8_lossy(&uploaded_invite.stdout).contains("SYNC_COMPLETE"));
     let invite_deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -520,5 +536,100 @@ fn declared_home_server_relays_events_between_offline_members()
             .contains(&newcomer.user().user_id())
     );
     assert!(!server.has_exited()?);
+
+    // Owner catches up with the acceptance, then removes the new member.
+    let synchronize_owner = || {
+        run_command(&[
+            "sync-home-server",
+            "--state",
+            &owner_text,
+            "--community",
+            &community_text,
+            "--listen",
+            "/ip4/127.0.0.1/udp/0/quic-v1",
+            "--idle-timeout-ms",
+            "300",
+        ])
+    };
+    for attempt in 0..4 {
+        require_success(&synchronize_owner()?)
+            .map_err(|e| format!("rapid owner reconnect {attempt}: {e}"))?;
+    }
+    let mut owner_node = CoreNode::open(EventStore::open(owner.database_path())?, Some(community))?;
+    let removal = create_chat_event(
+        owner.user(),
+        community,
+        owner_node.heads()?,
+        20,
+        ChatPayload::MemberRemove {
+            member: newcomer.user().user_id(),
+        },
+    )?;
+    owner_node.ingest(vec![removal.clone()])?;
+    require_success(&synchronize_owner()?).map_err(|e| format!("upload removal: {e}"))?;
+    assert!(server_observer.get(removal.event_id)?.is_some());
+    let removed = run_command(&[
+        "sync-home-server",
+        "--state",
+        &newcomer_text,
+        "--community",
+        &community_text,
+        "--listen",
+        "/ip4/127.0.0.1/udp/0/quic-v1",
+        "--idle-timeout-ms",
+        "300",
+    ])?;
+    assert!(
+        !removed.status.success(),
+        "removed member retained server access"
+    );
+    assert!(String::from_utf8_lossy(&removed.stderr).contains("UserNotAllowed"));
+
+    // A signed migration must stop the old server as soon as it learns it is
+    // no longer the declared device; it cannot keep serving under the old key.
+    let replacement = chatcommons_sync::auth::DeviceIdentity::generate()?;
+    owner_node = CoreNode::open(EventStore::open(owner.database_path())?, Some(community))?;
+    let migration = create_chat_event(
+        owner.user(),
+        community,
+        owner_node.heads()?,
+        21,
+        ChatPayload::HomeServerSet {
+            server_public_key: replacement.public_key().to_vec(),
+            endpoints: vec![available_address()?],
+        },
+    )?;
+    owner_node.ingest(vec![migration.clone()])?;
+    let _uploader = run_command(&[
+        "run",
+        "--state",
+        &owner_text,
+        "--community",
+        &community_text,
+        "--listen",
+        "/ip4/127.0.0.1/udp/0/quic-v1",
+        "--dial-peer",
+        &NodeState::load(&server_path)?
+            .device()
+            .peer_id()
+            .to_string(),
+        "--dial-address",
+        &declared_endpoint,
+        "--allow-user",
+        &hex::encode(NodeState::load(&server_path)?.user().user_id().as_bytes()),
+        "--idle-timeout-ms",
+        "300",
+    ])?;
+    // The migration response may arrive before server shutdown or be lost
+    // during shutdown. Verify durable state and fail-closed exit independently
+    // of that transport timing; local idle sync is not a delivery receipt.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !server.has_exited()? {
+        if Instant::now() >= deadline {
+            return Err("old Home Server did not fail closed after migration".into());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(server_observer.get(migration.event_id)?.is_some());
     Ok(())
 }

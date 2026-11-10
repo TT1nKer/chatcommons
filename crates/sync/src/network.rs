@@ -8,7 +8,7 @@ use futures::StreamExt;
 use libp2p::{
     Multiaddr, PeerId, StreamProtocol, Swarm, SwarmBuilder, dcutr, identify, noise, ping, relay,
     request_response::{self, ProtocolSupport},
-    swarm::{NetworkBehaviour, SwarmEvent},
+    swarm::{ConnectionId, NetworkBehaviour, SwarmEvent},
     tcp, yamux,
 };
 use rand_core::{OsRng, RngCore};
@@ -207,9 +207,12 @@ pub struct NetworkNode {
     revocations: auth::RevocationSet,
     authenticated: BTreeSet<PeerId>,
     authenticated_devices: BTreeMap<PeerId, auth::AuthenticatedDevice>,
-    authentication_sent: BTreeSet<PeerId>,
     accepted_by_remote: BTreeSet<PeerId>,
     sync_started: BTreeSet<PeerId>,
+    sync_requests: BTreeMap<request_response::OutboundRequestId, PeerId>,
+    application_connections: BTreeMap<PeerId, (ConnectionId, bool)>,
+    awaiting_connection_cleanup: BTreeSet<PeerId>,
+    supplemental_application_connections: BTreeMap<PeerId, BTreeMap<ConnectionId, bool>>,
     provisional: BTreeMap<PeerId, auth::AuthenticatedDevice>,
     bootstrap_grants: BTreeMap<EventId, BootstrapGrant>,
     pending_challenges: BTreeMap<PeerId, PendingChallenge>,
@@ -274,9 +277,12 @@ impl NetworkNode {
             revocations,
             authenticated: BTreeSet::new(),
             authenticated_devices: BTreeMap::new(),
-            authentication_sent: BTreeSet::new(),
             accepted_by_remote: BTreeSet::new(),
             sync_started: BTreeSet::new(),
+            sync_requests: BTreeMap::new(),
+            application_connections: BTreeMap::new(),
+            awaiting_connection_cleanup: BTreeSet::new(),
+            supplemental_application_connections: BTreeMap::new(),
             provisional: BTreeMap::new(),
             bootstrap_grants: BTreeMap::new(),
             pending_challenges: BTreeMap::new(),
@@ -364,6 +370,17 @@ impl NetworkNode {
         self.authenticated.contains(&peer)
     }
 
+    /// Local quiescence is only meaningful with a live, mutually authenticated
+    /// sync session and no outstanding requests or unresolved event ancestry.
+    /// This is not an end-to-end delivery receipt from every community member.
+    pub fn sync_is_idle(&self) -> bool {
+        self.sync.pending_len() == 0
+            && self.sync_requests.is_empty()
+            && self.sync_started.iter().any(|peer| {
+                self.authenticated.contains(peer) && self.accepted_by_remote.contains(peer)
+            })
+    }
+
     /// Replace the live authorization projection after signed community state
     /// changes. Peers removed by the new projection immediately lose sync
     /// authorization even if their transport connection remains open.
@@ -388,7 +405,6 @@ impl NetworkNode {
         for peer in rejected {
             self.authenticated.remove(&peer);
             self.authenticated_devices.remove(&peer);
-            self.authentication_sent.remove(&peer);
             self.accepted_by_remote.remove(&peer);
             self.sync_started.remove(&peer);
             let _ = self.swarm.disconnect_peer_id(peer);
@@ -568,23 +584,19 @@ impl NetworkNode {
             self.authenticated.insert(peer);
             self.authenticated_devices
                 .insert(peer, pending.authenticated);
-            self.swarm
+            let _ = self
+                .swarm
                 .behaviour_mut()
                 .request_response
-                .send_response(pending.channel, NetworkResponse::BootstrapAccepted)
-                .map_err(|_| NetworkError::Request("response channel closed".into()))?;
+                .send_response(pending.channel, NetworkResponse::BootstrapAccepted);
             self.maybe_start_sync(peer)?;
         } else {
-            self.swarm
-                .behaviour_mut()
-                .request_response
-                .send_response(
-                    pending.channel,
-                    NetworkResponse::Rejected {
-                        reason: RejectionCode::BootstrapNotApproved,
-                    },
-                )
-                .map_err(|_| NetworkError::Request("response channel closed".into()))?;
+            let _ = self.swarm.behaviour_mut().request_response.send_response(
+                pending.channel,
+                NetworkResponse::Rejected {
+                    reason: RejectionCode::BootstrapNotApproved,
+                },
+            );
         }
         Ok(())
     }
@@ -596,7 +608,10 @@ impl NetworkNode {
                     return Ok(NetworkEvent::Listening(address));
                 }
                 SwarmEvent::ConnectionEstablished {
-                    peer_id, endpoint, ..
+                    peer_id,
+                    connection_id,
+                    endpoint,
+                    ..
                 } => {
                     if self.relay_peers.contains(&peer_id) {
                         return Ok(NetworkEvent::RelayConnected(peer_id));
@@ -604,15 +619,47 @@ impl NetworkNode {
                     if endpoint.is_relayed() {
                         self.relayed_application_peers.insert(peer_id);
                     }
-                    if !self.authenticated.contains(&peer_id)
-                        && self.authentication_sent.insert(peer_id)
-                    {
-                        self.send(
-                            peer_id,
-                            NetworkRequest::Authenticate {
-                                certificate: self.certificate.clone(),
-                            },
-                        )?;
+                    // This alpha has one process per persisted device. Retire
+                    // the older connection before sending requests: libp2p
+                    // otherwise distributes them across old and new processes.
+                    let previous = self
+                        .application_connections
+                        .insert(peer_id, (connection_id, endpoint.is_relayed()));
+                    let upgrading_relay = !endpoint.is_relayed()
+                        && (previous.is_some_and(|(_, relayed)| relayed)
+                            || self
+                                .supplemental_application_connections
+                                .get(&peer_id)
+                                .is_some_and(|ids| !ids.is_empty()));
+                    if let Some((previous, relayed)) = previous.filter(|_| upgrading_relay) {
+                        // DCUtR adds a direct path to the same running process.
+                        // Preserve the authenticated relay path as its fallback.
+                        self.supplemental_application_connections
+                            .entry(peer_id)
+                            .or_default()
+                            .insert(previous, relayed);
+                        return Ok(NetworkEvent::Connected {
+                            peer: peer_id,
+                            relayed: false,
+                        });
+                    }
+                    self.authenticated.remove(&peer_id);
+                    self.authenticated_devices.remove(&peer_id);
+                    self.accepted_by_remote.remove(&peer_id);
+                    self.sync_started.remove(&peer_id);
+                    self.sync_requests.retain(|_, peer| *peer != peer_id);
+                    if let Some((previous, _)) = previous {
+                        self.awaiting_connection_cleanup.insert(peer_id);
+                        self.swarm.close_connection(previous);
+                        for (relay_connection, _) in self
+                            .supplemental_application_connections
+                            .remove(&peer_id)
+                            .unwrap_or_default()
+                        {
+                            self.swarm.close_connection(relay_connection);
+                        }
+                    } else {
+                        self.send_authentication(peer_id)?;
                     }
                     return Ok(NetworkEvent::Connected {
                         peer: peer_id,
@@ -621,10 +668,29 @@ impl NetworkNode {
                 }
                 SwarmEvent::ConnectionClosed {
                     peer_id,
+                    connection_id,
                     num_established,
                     ..
                 } => {
+                    if let Some(relays) =
+                        self.supplemental_application_connections.get_mut(&peer_id)
+                    {
+                        relays.remove(&connection_id);
+                        if self
+                            .application_connections
+                            .get(&peer_id)
+                            .is_some_and(|(current, _)| *current == connection_id)
+                            && let Some((fallback, relayed)) = relays.pop_first()
+                        {
+                            self.application_connections
+                                .insert(peer_id, (fallback, relayed));
+                        }
+                    }
                     if num_established > 0 {
+                        if num_established == 1 && self.awaiting_connection_cleanup.remove(&peer_id)
+                        {
+                            self.send_authentication(peer_id)?;
+                        }
                         continue;
                     }
                     if self.relay_peers.contains(&peer_id) {
@@ -632,13 +698,16 @@ impl NetworkNode {
                     }
                     self.authenticated.remove(&peer_id);
                     self.authenticated_devices.remove(&peer_id);
-                    self.authentication_sent.remove(&peer_id);
                     self.accepted_by_remote.remove(&peer_id);
                     self.sync_started.remove(&peer_id);
                     self.provisional.remove(&peer_id);
                     self.pending_challenges.remove(&peer_id);
                     self.proved_bootstraps.remove(&peer_id);
                     self.pending_acceptances.remove(&peer_id);
+                    self.application_connections.remove(&peer_id);
+                    self.supplemental_application_connections.remove(&peer_id);
+                    self.awaiting_connection_cleanup.remove(&peer_id);
+                    self.sync_requests.retain(|_, peer| *peer != peer_id);
                     return Ok(NetworkEvent::Disconnected(peer_id));
                 }
                 SwarmEvent::Behaviour(event) => {
@@ -744,41 +813,74 @@ impl NetworkNode {
         event: request_response::Event<NetworkRequest, NetworkResponse>,
     ) -> Result<Option<NetworkEvent>, NetworkError> {
         match event {
-            request_response::Event::Message { peer, message, .. } => match message {
-                request_response::Message::Request {
-                    request, channel, ..
-                } => {
-                    let request = match request {
-                        NetworkRequest::BootstrapAccept {
-                            invitation,
-                            acceptance,
-                        } => {
-                            return self
-                                .handle_bootstrap_acceptance(peer, invitation, acceptance, channel)
-                                .map(Some);
-                        }
-                        request => request,
-                    };
-                    let (response, authentication) = self.handle_request(peer, request);
-                    self.respond(channel, response)?;
-                    if matches!(authentication, Some(AuthenticationState::Full)) {
-                        self.maybe_start_sync(peer)?;
-                    } else if matches!(authentication, Some(AuthenticationState::Provisional)) {
-                        self.start_bootstrap(peer)?;
-                    }
-                    Ok(Some(
+            request_response::Event::Message {
+                peer,
+                connection_id,
+                message,
+            } => {
+                let current = self
+                    .application_connections
+                    .get(&peer)
+                    .is_some_and(|(id, _)| *id == connection_id);
+                let relay = self
+                    .supplemental_application_connections
+                    .get(&peer)
+                    .is_some_and(|ids| ids.contains_key(&connection_id));
+                if !current && !relay {
+                    return Ok(None);
+                }
+                match message {
+                    request_response::Message::Request {
+                        request, channel, ..
+                    } => {
+                        let request = match request {
+                            NetworkRequest::BootstrapAccept {
+                                invitation,
+                                acceptance,
+                            } => {
+                                return self
+                                    .handle_bootstrap_acceptance(
+                                        peer, invitation, acceptance, channel,
+                                    )
+                                    .map(Some);
+                            }
+                            request => request,
+                        };
+                        let (response, authentication) = self.handle_request(peer, request);
+                        self.respond(channel, response)?;
                         if matches!(authentication, Some(AuthenticationState::Full)) {
-                            NetworkEvent::Authenticated(peer)
-                        } else {
-                            NetworkEvent::SyncProgress(peer)
-                        },
-                    ))
+                            self.maybe_start_sync(peer)?;
+                        } else if matches!(authentication, Some(AuthenticationState::Provisional)) {
+                            self.start_bootstrap(peer)?;
+                        }
+                        Ok(Some(
+                            if matches!(authentication, Some(AuthenticationState::Full)) {
+                                NetworkEvent::Authenticated(peer)
+                            } else {
+                                NetworkEvent::SyncProgress(peer)
+                            },
+                        ))
+                    }
+                    request_response::Message::Response {
+                        request_id,
+                        response,
+                    } => {
+                        self.sync_requests.remove(&request_id);
+                        self.handle_response(peer, response).map(Some)
+                    }
                 }
-                request_response::Message::Response { response, .. } => {
-                    self.handle_response(peer, response).map(Some)
+            }
+            request_response::Event::OutboundFailure {
+                peer,
+                error,
+                request_id,
+                ..
+            } => {
+                if self.sync_requests.remove(&request_id).is_some() {
+                    // A dropped sync request makes the inventory incomplete.
+                    // The caller can retry by reconnecting.
+                    self.sync_started.remove(&peer);
                 }
-            },
-            request_response::Event::OutboundFailure { peer, error, .. } => {
                 Ok(Some(NetworkEvent::RequestFailed {
                     peer,
                     reason: error.to_string(),
@@ -1154,11 +1256,12 @@ impl NetworkNode {
         {
             return Err(NetworkError::Rejected(RejectionCode::FrameLimit));
         }
-        self.swarm
+        let _ = self
+            .swarm
             .behaviour_mut()
             .request_response
-            .send_response(channel, response)
-            .map_err(|_| NetworkError::Request("response channel closed".into()))
+            .send_response(channel, response);
+        Ok(())
     }
 
     fn send(&mut self, peer: PeerId, request: NetworkRequest) -> Result<(), NetworkError> {
@@ -1169,11 +1272,25 @@ impl NetworkNode {
         {
             return Err(NetworkError::Rejected(RejectionCode::FrameLimit));
         }
-        self.swarm
+        let is_sync = matches!(&request, NetworkRequest::Sync { .. });
+        let request_id = self
+            .swarm
             .behaviour_mut()
             .request_response
             .send_request(&peer, request);
+        if is_sync {
+            self.sync_requests.insert(request_id, peer);
+        }
         Ok(())
+    }
+
+    fn send_authentication(&mut self, peer: PeerId) -> Result<(), NetworkError> {
+        self.send(
+            peer,
+            NetworkRequest::Authenticate {
+                certificate: self.certificate.clone(),
+            },
+        )
     }
 
     fn start_bootstrap(&mut self, peer: PeerId) -> Result<(), NetworkError> {
@@ -1263,4 +1380,72 @@ fn normalize_messages(messages: Vec<SyncMessage>) -> Result<Vec<SyncMessage>, Re
         return Err(RejectionCode::FrameLimit);
     }
     Ok(normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chatcommons_crypto::Identity;
+    use chatcommons_storage::EventStore;
+
+    #[tokio::test]
+    async fn transport_binding_and_live_authorization_fail_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let local = Identity::from_seed([141; 32]);
+        let member = Identity::from_seed([142; 32]);
+        let local_device = auth::DeviceIdentity::from_seed([143; 32])?;
+        let member_device = auth::DeviceIdentity::from_seed([144; 32])?;
+        let certificate = auth::create_device_certificate(&member, &member_device, 1);
+        let community = chatcommons_protocol::CommunityId::from_bytes([1; 32]);
+        let node = chatcommons_node_core::CoreNode::open(
+            EventStore::open(directory.path().join("events.db"))?,
+            None,
+        )?;
+        let mut network = NetworkNode::new(
+            &local_device,
+            auth::create_device_certificate(&local, &local_device, 1),
+            SyncPeer::new(node, community)?,
+            BTreeSet::from([member.user_id()]),
+            auth::RevocationSet::default(),
+        )?;
+        assert!(matches!(
+            network.authenticate(local_device.peer_id(), &certificate),
+            Err(RejectionCode::PeerIdMismatch)
+        ));
+        network
+            .authenticate(member_device.peer_id(), &certificate)
+            .map_err(|e| format!("{e:?}"))?;
+        assert!(network.is_authenticated(member_device.peer_id()));
+        assert!(
+            !network.sync_is_idle(),
+            "authentication alone is not synchronization"
+        );
+        network.replace_authorization(BTreeSet::new(), BTreeSet::new());
+        assert!(!network.is_authenticated(member_device.peer_id()));
+        let (response, _) = network.handle_request(
+            member_device.peer_id(),
+            NetworkRequest::Sync {
+                message: network.sync.hello(),
+            },
+        );
+        assert!(matches!(
+            response,
+            NetworkResponse::Rejected {
+                reason: RejectionCode::NotAuthenticated
+            }
+        ));
+        assert!(matches!(
+            network.authenticate(member_device.peer_id(), &certificate),
+            Err(RejectionCode::UserNotAllowed)
+        ));
+        // An infrastructure device is trusted only for the active declaration.
+        network.replace_authorization(BTreeSet::new(), BTreeSet::from([member_device.device_id()]));
+        network
+            .authenticate(member_device.peer_id(), &certificate)
+            .map_err(|e| format!("{e:?}"))?;
+        network.replace_authorization(BTreeSet::new(), BTreeSet::from([local_device.device_id()]));
+        assert!(!network.is_authenticated(member_device.peer_id()));
+        Ok(())
+    }
 }

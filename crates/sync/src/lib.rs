@@ -221,11 +221,18 @@ impl SyncPeer {
     }
 
     fn want_unknown(&self, ids: Vec<EventId>) -> Vec<SyncMessage> {
-        let wanted: Vec<EventId> = ids
+        // A previous connection may have lost a parent request/response after
+        // the child was buffered. Retry the missing frontier on each inventory.
+        let mut wanted: BTreeSet<EventId> = ids
             .into_iter()
             .filter(|id| !self.node.event_ids().contains(id) && !self.pending.contains_key(id))
             .collect();
-        want_messages(self.community, wanted)
+        for event in self.pending.values() {
+            wanted.extend(event.content.parents.iter().copied().filter(|id| {
+                !self.node.event_ids().contains(id) && !self.pending.contains_key(id)
+            }));
+        }
+        want_messages(self.community, wanted.into_iter().collect())
     }
 
     fn serve(&self, ids: Vec<EventId>) -> Result<Vec<SyncMessage>, SyncError> {

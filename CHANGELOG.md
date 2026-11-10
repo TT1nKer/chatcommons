@@ -6,6 +6,44 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] - 2026-11-10
+
+### Fixed
+
+- Retry missing event ancestry after a lost response and repeated inventory.
+- Repeat authentication and inventory on overlapping connections from the same
+  persisted device, so rapid process restarts can synchronize.
+- Resume interrupted invitation admission with the same identity and signed
+  acceptance, including a lost success/config write; other identities still
+  cannot reuse a consumed invitation.
+- Require a live authenticated session, completed requests and resolved ancestry
+  before one-shot idle synchronization reports success. Bound bootstrap and
+  one-shot synchronization attempts to 30 seconds each.
+- Preserve message drafts until local persistence succeeds, including edits
+  made while a save is running. Show identity readiness before joining and the
+  current community identifier instead of a hardcoded test community. Keep long
+  invitations and the send button inside the minimum supported window.
+
+### Validated
+
+- Loopback QUIC and relay bootstrap with isolated identities and SQLite files;
+  offline members, server restart, rapid reconnect, invitation retry/replay,
+  removed-member rejection and fail-closed Home Server migration.
+- Native Chinese/English localization and first-use window checks; see
+  `docs/validation/alpha.6.md` for commands, evidence and remaining boundaries.
+
+### Changed
+
+- Add main/PR quality CI separately from tag-only distributable builds.
+- Publish version-specific prerelease notes and SHA-256 artifact checksums.
+
+### Compatibility
+
+- Core protocol v2, chat profile v2, wire formats and SQLite schema are unchanged.
+- Invitations have no expiry/cancellation mechanism. This remains a test alpha
+  without account recovery, encryption, multi-device identity or trusted
+  publisher signing/notarization.
+
 ## [0.1.0-alpha.3] - 2026-07-23
 
 ### Changed
@@ -90,7 +128,8 @@ and protocol compatibility are separate; see `docs/versioning.md`.
 - Voice, video, screen sharing, MLS, attachments, and production account
   recovery are not implemented.
 
-[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.3...HEAD
+[Unreleased]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.6...HEAD
+[0.1.0-alpha.6]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.3...v0.1.0-alpha.6
 [0.1.0-alpha.3]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/TT1nKer/chatcommons/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/TT1nKer/chatcommons/releases/tag/v0.1.0-alpha.1

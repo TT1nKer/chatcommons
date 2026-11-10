@@ -16,6 +16,7 @@ use chatcommons_sync::{
     bootstrap::{BootstrapError, create_code, parse_code},
     network::{
         BootstrapGrant, MAX_BOOTSTRAP_ANCESTRY_EVENTS, NetworkError, NetworkEvent, NetworkNode,
+        RejectionCode,
     },
 };
 use libp2p::{Multiaddr, PeerId, identity};
@@ -679,16 +680,81 @@ fn command_create_invite(options: &Options) -> Result<(), CliError> {
 async fn command_join(options: &Options) -> Result<(), CliError> {
     options.allow_only(&["--state", "--invite-code"])?;
     let state = NodeState::load(options.require_one("--state")?)?;
-    let _lock = state.acquire_lock()?;
+    let mut state_lock = Some(state.acquire_lock()?);
     let envelope = parse_code(options.require_one("--invite-code")?)?.validate()?;
     let prepared = parse_invite_package(envelope.invite_package())?.prepare()?;
     let community = prepared.community();
     let invitation = prepared.invitation();
     let store = EventStore::open(state.database_path())?;
+    let existing = store.events(community)?;
+    let mut previous_acceptance = None;
     if !store.is_empty()? {
-        return Err(CliError::DatabaseNotEmpty);
+        if existing.is_empty() {
+            return Err(CliError::DatabaseNotEmpty);
+        }
+        let resolution = resolve(&existing)?;
+        previous_acceptance = existing.iter().find(|event| {
+            resolution.snapshot.event_ids.contains(&event.event_id)
+                && chatcommons_protocol::author_id(event).ok() == Some(state.user().user_id())
+                && matches!(decode(event), Ok(ChatPayload::MemberAccept { invitation: id, .. }) if id == invitation)
+        }).cloned();
+        if previous_acceptance.is_some()
+            && resolution
+                .snapshot
+                .members
+                .contains(&state.user().user_id())
+        {
+            // The server may have committed admission before its response (or
+            // the desktop's config write) was lost. Authenticate and sync first.
+            drop(state_lock.take());
+            let resume = Options::parse(
+                [
+                    "--state".to_owned(),
+                    options.require_one("--state")?.to_owned(),
+                    "--community".into(),
+                    hex::encode(community.as_bytes()),
+                    "--listen".into(),
+                    "/ip4/0.0.0.0/udp/0/quic-v1".into(),
+                    "--dial-peer".into(),
+                    envelope.peer_id().to_string(),
+                    "--dial-address".into(),
+                    envelope.address().to_string(),
+                    "--idle-timeout-ms".into(),
+                    "1500".into(),
+                ]
+                .into_iter(),
+            )?;
+            match command_network(&resume, NetworkRole::Peer, DialMode::Explicit).await {
+                Ok(()) => {
+                    println!("JOIN_COMPLETE={}", envelope.peer_id());
+                    io::stdout().flush()?;
+                    return Ok(());
+                }
+                Err(CliError::Network(NetworkError::Rejected(RejectionCode::UserNotAllowed))) => {
+                    // Admission was not committed remotely; retry the bootstrap
+                    // with the same signed acceptance, never a second redemption.
+                }
+                Err(error) => return Err(error),
+            }
+            state_lock = Some(state.acquire_lock()?);
+        } else if !resolution
+            .snapshot
+            .active_invitations
+            .contains_key(&invitation)
+        {
+            return Err(CliError::DatabaseNotEmpty);
+        }
     }
-    let core = CoreNode::open(store, None)?;
+    let core = CoreNode::open(
+        store,
+        if existing.is_empty() {
+            None
+        } else {
+            Some(community)
+        },
+    )?;
+    // Retain the exclusive lock throughout the bootstrap attempt.
+    let _state_lock = state_lock;
     let certificate =
         create_device_certificate(state.user(), state.device(), state.created_at_ms());
     let mut network = NetworkNode::new(
@@ -707,8 +773,15 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
     io::stdout().flush()?;
 
     let mut prepared = Some(prepared);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
-        match network.next_event().await? {
+        match tokio::time::timeout_at(deadline, network.next_event())
+            .await
+            .map_err(|_| {
+                CliError::Network(NetworkError::Request(
+                    "invitation bootstrap timed out".into(),
+                ))
+            })?? {
             NetworkEvent::Connected { peer, relayed } => {
                 println!(
                     "CONNECTED={peer} via={}",
@@ -796,8 +869,12 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
                 }
                 network.approve_bootstrap_endpoint(peer)?;
                 network.sync_peer_mut().node_mut().ingest(events.clone())?;
-                let acceptance =
-                    validated.create_acceptance(state.user(), vec![invitation], now_ms()?)?;
+                let acceptance = match previous_acceptance.take() {
+                    Some(acceptance) => acceptance,
+                    None => {
+                        validated.create_acceptance(state.user(), vec![invitation], now_ms()?)?
+                    }
+                };
                 let mut with_acceptance = events;
                 with_acceptance.push(acceptance.clone());
                 let accepted = resolve(&with_acceptance)?;
@@ -818,7 +895,11 @@ async fn command_join(options: &Options) -> Result<(), CliError> {
                 io::stdout().flush()?;
                 return Ok(());
             }
-            NetworkEvent::Disconnected(peer) => println!("DISCONNECTED={peer}"),
+            NetworkEvent::Disconnected(peer) => {
+                return Err(CliError::Network(NetworkError::Request(format!(
+                    "bootstrap peer {peer} disconnected"
+                ))));
+            }
             NetworkEvent::RequestFailed { reason, .. } => {
                 return Err(CliError::Network(NetworkError::Request(reason)));
             }
@@ -932,9 +1013,9 @@ async fn command_network(
     let profile = resolve(&core.all_events()?)?;
     let home_server = profile.snapshot.home_server.clone();
     if role == NetworkRole::HomeServer
-        && !home_server
+        && home_server
             .as_ref()
-            .is_some_and(|binding| binding.server_public_key == state.device().public_key())
+            .is_none_or(|binding| binding.server_public_key != state.device().public_key())
     {
         return Err(if home_server.is_some() {
             CliError::WrongHomeServerIdentity
@@ -1005,18 +1086,25 @@ async fn command_network(
     }
     io::stdout().flush()?;
 
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     let mut synchronization_started = false;
     loop {
-        let event = if synchronization_started && idle_timeout.is_some() {
-            match tokio::time::timeout(
-                idle_timeout
-                    .ok_or_else(|| CliError::Arguments("idle timeout is missing".into()))?,
-                network.next_event(),
-            )
-            .await
-            {
+        let event = if let Some(idle_timeout) = idle_timeout {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let wait = if synchronization_started {
+                idle_timeout.min(remaining)
+            } else {
+                remaining
+            };
+            match tokio::time::timeout(wait, network.next_event()).await {
                 Ok(result) => result?,
                 Err(_) => {
+                    if !network.sync_is_idle() {
+                        return Err(CliError::Network(NetworkError::Request(
+                            "synchronization incomplete; retry when the Home Server is reachable"
+                                .into(),
+                        )));
+                    }
                     println!(
                         "SYNC_COMPLETE events={}",
                         network.sync_peer().node().event_ids().len()
@@ -1104,9 +1192,7 @@ async fn command_network(
             role,
             state.device().public_key(),
         )?;
-        if sync_progress {
-            synchronization_started = true;
-        }
+        synchronization_started |= sync_progress;
         io::stdout().flush()?;
         if sync_progress
             && exit_after_events
@@ -1130,11 +1216,11 @@ fn refresh_network_authorization(
 ) -> Result<(), CliError> {
     let profile = resolve(&network.sync_peer().node().all_events()?)?;
     if role == NetworkRole::HomeServer
-        && !profile
+        && profile
             .snapshot
             .home_server
             .as_ref()
-            .is_some_and(|binding| binding.server_public_key == local_device_public_key)
+            .is_none_or(|binding| binding.server_public_key != local_device_public_key)
     {
         return Err(if profile.snapshot.home_server.is_some() {
             CliError::WrongHomeServerIdentity

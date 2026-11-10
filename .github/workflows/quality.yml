@@ -1,0 +1,30 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install desktop build libraries
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev
+      - run: cargo fmt --all -- --check
+      - run: cargo build --locked --workspace --all-targets
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace --all-targets
+      - name: Check prototype localization and feedback
+        run: python3 -m unittest discover -s apps/review-prototype -p 'test_*.py'
