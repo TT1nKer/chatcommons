@@ -49,7 +49,7 @@ inbox. It does not require or create a public GitHub issue.
 ## Workspace
 
 - `chatcommons-crypto`: Ed25519 identities and byte-level verification
-- `chatcommons-cli`: Unix-only M2c-M3d diagnostic executables
+- `chatcommons-cli`: diagnostic node, Home Server, and signed-text commands
 - `chatcommons-protocol`: opaque signed envelopes, canonical encoding, parsing and IDs
 - `chatcommons-storage`: idempotent SQLite event persistence
 - `chatcommons-node-core`: generic DAG validation and local ingestion
@@ -61,9 +61,15 @@ inbox. It does not require or create a public GitHub issue.
 ## M2c-M3d diagnostic node
 
 The current executable is a developer connectivity tool, not an end-user client.
-It persists plaintext development keys only on Unix, with a `0700` state
-directory and `0600` identity file. Do not reuse these keys for high-value or
+It persists plaintext development keys. On Unix, the state directory is `0700`
+and the identity file is `0600`. Windows state inherits its parent directory's
+ACL; the desktop places it in per-user application data. Hardened Windows ACL
+management is not implemented. Do not reuse these keys for high-value or
 production identities.
+
+开发密钥以明文保存：Unix 状态目录为 `0700`、身份文件为 `0600`；Windows 继承父目录
+ACL，桌面将状态放在用户应用数据目录。尚未实现专门的 Windows ACL 加固。
+仅使用测试身份，不要复用重要身份密钥。
 
 ```sh
 cargo run --bin chatcommons-node -- init --state <node-a-directory>
